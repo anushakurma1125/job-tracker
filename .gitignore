@@ -1,0 +1,6 @@
+jobs.db
+__pycache__/
+*.pyc
+.env
+.claude/
+run_preview.py

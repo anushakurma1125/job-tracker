@@ -1,0 +1,47 @@
+body {
+    background-color: #f8f9fa;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.stat-card {
+    transition: border-color 0.2s, box-shadow 0.2s;
+    border: 2px solid transparent;
+}
+
+.stat-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.stat-card.border-primary {
+    border-color: #0d6efd !important;
+}
+
+.table th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    font-weight: 600;
+}
+
+.status-select {
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-applied { color: #0d6efd; border-color: #0d6efd; }
+.status-interviewing { color: #ffc107; border-color: #ffc107; }
+.status-offer { color: #198754; border-color: #198754; }
+.status-rejected { color: #dc3545; border-color: #dc3545; }
+.status-referral { color: #6f42c1; border-color: #6f42c1; }
+.status-withdrawn { color: #6c757d; border-color: #6c757d; }
+.status-saved { color: #0dcaf0; border-color: #0dcaf0; }
+
+.job-description {
+    white-space: pre-wrap;
+    line-height: 1.7;
+    font-size: 0.95rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
