@@ -8,6 +8,9 @@ from extractor import extract_job_details
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
+# Always initialize the database (works with both direct run and Gunicorn)
+init_db()
+
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -212,5 +215,4 @@ def delete_single_job(job_id):
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True, port=5001)
