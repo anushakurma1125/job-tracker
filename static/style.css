@@ -38,6 +38,19 @@ body {
 .status-withdrawn { color: #6c757d; border-color: #6c757d; }
 .status-saved { color: #0dcaf0; border-color: #0dcaf0; }
 
+.comment-input {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background-color: transparent;
+}
+
+.comment-input:focus {
+    background-color: #fff;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.15);
+}
+
 .job-description {
     white-space: pre-wrap;
     line-height: 1.7;

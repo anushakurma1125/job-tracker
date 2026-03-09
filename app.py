@@ -111,6 +111,10 @@ def bulk_upload():
                 col_map["link"] = i
             elif "status" in h:
                 col_map["status"] = i
+            elif "comment" in h or "note" in h:
+                col_map["comment"] = i
+            elif "visa" in h:
+                col_map["visa_answer"] = i
 
         added = 0
         skipped = 0
@@ -137,6 +141,8 @@ def bulk_upload():
                     "job_description": get_val("job_description"),
                     "link": link,
                     "status": get_val("status") or "Applied",
+                    "comment": get_val("comment"),
+                    "visa_answer": get_val("visa_answer"),
                 }
 
                 # Skip empty rows

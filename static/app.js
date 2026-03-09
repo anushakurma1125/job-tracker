@@ -45,7 +45,7 @@ function renderJobs() {
     if (filtered.length === 0) {
         tbody.innerHTML = `
             <tr id="emptyState">
-                <td colspan="7" class="text-center py-5 text-muted">
+                <td colspan="9" class="text-center py-5 text-muted">
                     <i class="bi bi-briefcase" style="font-size: 2rem;"></i>
                     <p class="mt-2 mb-0">${activeFilter ? `No ${activeFilter.toLowerCase()} jobs.` : 'No jobs tracked yet. Click "Add Job" to get started.'}</p>
                 </td>
@@ -66,6 +66,20 @@ function renderJobs() {
                         .map(s => `<option value="${s}" ${s === job.status ? "selected" : ""}>${s}</option>`)
                         .join("")}
                 </select>
+            </td>
+            <td>
+                <input type="text" class="form-control form-control-sm comment-input"
+                       value="${escapeHtml(job.comment || '')}"
+                       placeholder="Add comment..."
+                       onchange="updateField(${job.id}, 'comment', this.value)"
+                       style="min-width: 140px;">
+            </td>
+            <td>
+                <input type="text" class="form-control form-control-sm comment-input"
+                       value="${escapeHtml(job.visa_answer || '')}"
+                       placeholder="Visa answer..."
+                       onchange="updateField(${job.id}, 'visa_answer', this.value)"
+                       style="min-width: 140px;">
             </td>
             <td>
                 <a href="${escapeHtml(job.link)}" target="_blank" rel="noopener" class="text-decoration-none small">
@@ -143,6 +157,14 @@ async function updateStatus(id, status) {
     loadJobs();
 }
 
+async function updateField(id, field, value) {
+    await fetch(`/api/jobs/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+    });
+}
+
 async function deleteJob(id) {
     if (!confirm("Delete this job application?")) return;
     await fetch(`/api/jobs/${id}`, { method: "DELETE" });
@@ -159,6 +181,8 @@ async function showDetails(id) {
     document.getElementById("detailAppliedDate").textContent = job.applied_date || "—";
     document.getElementById("detailPostedOn").textContent = job.posted_on || "—";
     document.getElementById("detailStatus").innerHTML = `<span class="badge ${statusBadge(job.status)}">${job.status}</span>`;
+    document.getElementById("detailComment").textContent = job.comment || "—";
+    document.getElementById("detailVisaAnswer").textContent = job.visa_answer || "—";
     document.getElementById("detailLink").innerHTML = job.link
         ? `<a href="${escapeHtml(job.link)}" target="_blank" rel="noopener">${escapeHtml(job.link)}</a>`
         : "—";

@@ -23,11 +23,24 @@ def init_db():
             job_description TEXT,
             link TEXT,
             status TEXT DEFAULT 'Applied',
+            comment TEXT DEFAULT '',
+            visa_answer TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
+
+    # Migrate existing database: add comment and visa_answer columns if missing
+    cursor = conn.execute("PRAGMA table_info(jobs)")
+    existing_cols = {row["name"] for row in cursor.fetchall()}
+    if "comment" not in existing_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN comment TEXT DEFAULT ''")
+        conn.commit()
+    if "visa_answer" not in existing_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN visa_answer TEXT DEFAULT ''")
+        conn.commit()
+
     conn.close()
 
 
@@ -42,8 +55,8 @@ def add_job(data):
     conn = get_connection()
     cursor = conn.execute(
         """
-        INSERT INTO jobs (applied_date, company, role, posted_on, job_description, link, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (applied_date, company, role, posted_on, job_description, link, status, comment, visa_answer)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data.get("applied_date", datetime.now().strftime("%Y-%m-%d")),
@@ -53,6 +66,8 @@ def add_job(data):
             data.get("job_description", ""),
             data.get("link", ""),
             data.get("status", "Applied"),
+            data.get("comment", ""),
+            data.get("visa_answer", ""),
         ),
     )
     conn.commit()
@@ -87,7 +102,7 @@ def update_job(job_id, data):
     conn = get_connection()
     fields = []
     values = []
-    for key in ("applied_date", "company", "role", "posted_on", "job_description", "link", "status"):
+    for key in ("applied_date", "company", "role", "posted_on", "job_description", "link", "status", "comment", "visa_answer"):
         if key in data:
             fields.append(f"{key} = ?")
             values.append(data[key])

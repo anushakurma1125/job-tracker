@@ -85,13 +85,15 @@
                                 <th>Role</th>
                                 <th>Posted On</th>
                                 <th>Status</th>
+                                <th>Comment</th>
+                                <th>Visa Answer</th>
                                 <th>Link</th>
                                 <th class="text-end">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="jobsTableBody">
                             <tr id="emptyState">
-                                <td colspan="7" class="text-center py-5 text-muted">
+                                <td colspan="9" class="text-center py-5 text-muted">
                                     <i class="bi bi-briefcase" style="font-size: 2rem;"></i>
                                     <p class="mt-2 mb-0">No jobs tracked yet. Click "Add Job" to get started.</p>
                                 </td>
@@ -165,6 +167,14 @@
                         <div class="col-sm-9" id="detailStatus"></div>
                     </div>
                     <div class="row mb-3">
+                        <div class="col-sm-3 text-muted">Comment</div>
+                        <div class="col-sm-9" id="detailComment"></div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-sm-3 text-muted">Visa Answer</div>
+                        <div class="col-sm-9" id="detailVisaAnswer"></div>
+                    </div>
+                    <div class="row mb-3">
                         <div class="col-sm-3 text-muted">Link</div>
                         <div class="col-sm-9" id="detailLink"></div>
                     </div>
@@ -190,7 +200,7 @@
                         <input type="file" class="form-control" id="bulkFile" accept=".xlsx,.xls">
                         <div class="form-text">
                             Your spreadsheet should have these columns:<br>
-                            <strong>Applied Date | Company | Role | Posted On | Job Description | Link</strong>
+                            <strong>Applied Date | Company | Role | Posted On | Job Description | Link | Comment | Visa Answer</strong>
                         </div>
                     </div>
                     <div id="bulkStatus" class="d-none">
