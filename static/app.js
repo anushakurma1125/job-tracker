@@ -180,6 +180,55 @@ function statusBadge(status) {
     return map[status] || "bg-secondary";
 }
 
+async function bulkUpload() {
+    const fileInput = document.getElementById("bulkFile");
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const btn = document.getElementById("bulkSubmitBtn");
+    const statusEl = document.getElementById("bulkStatus");
+    const resultEl = document.getElementById("bulkResult");
+    const errorEl = document.getElementById("bulkError");
+
+    btn.disabled = true;
+    statusEl.classList.remove("d-none");
+    resultEl.classList.add("d-none");
+    errorEl.classList.add("d-none");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        const res = await fetch("/api/jobs/bulk", {
+            method: "POST",
+            body: formData,
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.error || "Upload failed");
+        }
+
+        let html = `<div class="alert alert-success py-2">
+            <strong>${data.added}</strong> jobs imported`;
+        if (data.skipped > 0) html += `, <strong>${data.skipped}</strong> duplicates skipped`;
+        html += `.</div>`;
+        if (data.errors && data.errors.length > 0) {
+            html += `<div class="alert alert-warning py-2 small">${data.errors.join("<br>")}</div>`;
+        }
+        resultEl.innerHTML = html;
+        resultEl.classList.remove("d-none");
+        fileInput.value = "";
+        loadJobs();
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("d-none");
+    } finally {
+        btn.disabled = false;
+        statusEl.classList.add("d-none");
+    }
+}
+
 function escapeHtml(text) {
     if (!text) return "";
     const div = document.createElement("div");

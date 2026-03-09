@@ -20,6 +20,9 @@
                 <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addJobModal">
                     <i class="bi bi-plus-lg me-1"></i> Add Job
                 </button>
+                <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#bulkUploadModal">
+                    <i class="bi bi-upload me-1"></i> Bulk Upload
+                </button>
                 <a href="/logout" class="btn btn-outline-secondary">
                     <i class="bi bi-box-arrow-right"></i>
                 </a>
@@ -168,6 +171,42 @@
                     <hr>
                     <h6 class="text-muted mb-2">Job Description</h6>
                     <div id="detailDescription" class="job-description"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Upload Modal -->
+    <div class="modal fade" id="bulkUploadModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Bulk Upload from Excel</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="bulkFile" class="form-label">Upload Excel File (.xlsx)</label>
+                        <input type="file" class="form-control" id="bulkFile" accept=".xlsx,.xls">
+                        <div class="form-text">
+                            Your spreadsheet should have these columns:<br>
+                            <strong>Applied Date | Company | Role | Posted On | Job Description | Link</strong>
+                        </div>
+                    </div>
+                    <div id="bulkStatus" class="d-none">
+                        <div class="d-flex align-items-center text-muted">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            <span>Uploading and processing...</span>
+                        </div>
+                    </div>
+                    <div id="bulkResult" class="d-none"></div>
+                    <div id="bulkError" class="alert alert-danger d-none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="bulkSubmitBtn" onclick="bulkUpload()">
+                        <i class="bi bi-upload me-1"></i> Upload & Import
+                    </button>
                 </div>
             </div>
         </div>

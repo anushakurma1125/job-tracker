@@ -75,6 +75,90 @@ def create_job():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/jobs/bulk", methods=["POST"])
+@login_required
+def bulk_upload():
+    from openpyxl import load_workbook
+    import io
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    if not file.filename.endswith((".xlsx", ".xls")):
+        return jsonify({"error": "Please upload an Excel file (.xlsx)"}), 400
+
+    try:
+        wb = load_workbook(io.BytesIO(file.read()), read_only=True)
+        ws = wb.active
+
+        # Read header row to map columns
+        headers = [str(cell.value or "").strip().lower() for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+
+        col_map = {}
+        for i, h in enumerate(headers):
+            if "applied" in h and "date" in h:
+                col_map["applied_date"] = i
+            elif "company" in h:
+                col_map["company"] = i
+            elif "role" in h or "title" in h or "position" in h:
+                col_map["role"] = i
+            elif "posted" in h:
+                col_map["posted_on"] = i
+            elif "description" in h:
+                col_map["job_description"] = i
+            elif "link" in h or "url" in h:
+                col_map["link"] = i
+            elif "status" in h:
+                col_map["status"] = i
+
+        added = 0
+        skipped = 0
+        errors = []
+
+        for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            try:
+                def get_val(key):
+                    if key in col_map and col_map[key] < len(row):
+                        val = row[col_map[key]]
+                        return str(val).strip() if val is not None else ""
+                    return ""
+
+                link = get_val("link")
+                if link and job_exists(link):
+                    skipped += 1
+                    continue
+
+                job_data = {
+                    "applied_date": get_val("applied_date"),
+                    "company": get_val("company"),
+                    "role": get_val("role"),
+                    "posted_on": get_val("posted_on"),
+                    "job_description": get_val("job_description"),
+                    "link": link,
+                    "status": get_val("status") or "Applied",
+                }
+
+                # Skip empty rows
+                if not job_data["company"] and not job_data["role"] and not job_data["link"]:
+                    continue
+
+                add_job(job_data)
+                added += 1
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+
+        wb.close()
+        return jsonify({
+            "added": added,
+            "skipped": skipped,
+            "errors": errors,
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
+
+
 @app.route("/api/jobs/<int:job_id>", methods=["GET"])
 @login_required
 def get_single_job(job_id):
