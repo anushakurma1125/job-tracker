@@ -8,6 +8,21 @@ from extractor import extract_job_details
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return JSON for API errors instead of HTML error pages."""
+    if request.path.startswith("/api/"):
+        return jsonify({"error": str(e)}), 500
+    return e
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Internal server error"}), 500
+    return e
+
 # Auth credentials from environment variables
 APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "password")
@@ -59,19 +74,24 @@ def list_jobs():
 @app.route("/api/jobs", methods=["POST"])
 @login_required
 def create_job():
-    data = request.get_json()
-    link = data.get("link", "").strip()
-    if not link:
-        return jsonify({"error": "Job link is required"}), 400
-
-    if job_exists(link):
-        return jsonify({"error": "This job link has already been added"}), 409
-
     try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request body"}), 400
+
+        link = data.get("link", "").strip()
+        if not link:
+            return jsonify({"error": "Job link is required"}), 400
+
+        if job_exists(link):
+            return jsonify({"error": "This job link has already been added"}), 409
+
         extracted = extract_job_details(link)
         job = add_job(extracted)
         return jsonify(job), 201
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
