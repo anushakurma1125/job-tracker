@@ -112,6 +112,7 @@ def bulk_upload():
         return jsonify({"error": "Please upload an Excel file (.xlsx)"}), 400
 
     try:
+        from datetime import datetime as dt
         wb = load_workbook(io.BytesIO(file.read()), read_only=True)
         ws = wb.active
 
@@ -148,7 +149,12 @@ def bulk_upload():
                 def get_val(key):
                     if key in col_map and col_map[key] < len(row):
                         val = row[col_map[key]]
-                        return str(val).strip() if val is not None else ""
+                        if val is None:
+                            return ""
+                        # Handle datetime objects from Excel — strip time
+                        if hasattr(val, 'strftime'):
+                            return val.strftime("%Y-%m-%d")
+                        return str(val).strip()
                     return ""
 
                 link = get_val("link")
