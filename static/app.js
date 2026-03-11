@@ -390,3 +390,61 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// ── Column Resizing ──
+function initColumnResize() {
+    const table = document.querySelector("table");
+    if (!table) return;
+
+    const headerRow = table.querySelector("thead tr");
+    const ths = headerRow.querySelectorAll("th");
+
+    // Set initial widths from rendered sizes, then fix the table layout
+    ths.forEach(th => {
+        th.style.width = th.offsetWidth + "px";
+    });
+    table.style.tableLayout = "fixed";
+
+    // Remove old handles
+    table.querySelectorAll(".col-resize-handle").forEach(h => h.remove());
+
+    // Add resize handles
+    ths.forEach(th => {
+        const handle = document.createElement("div");
+        handle.className = "col-resize-handle";
+        th.appendChild(handle);
+
+        let startX, startW;
+
+        handle.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Don't trigger sort
+            startX = e.pageX;
+            startW = th.offsetWidth;
+            handle.classList.add("active");
+            table.classList.add("resizing");
+
+            const onMouseMove = (e) => {
+                const newWidth = Math.max(50, startW + (e.pageX - startX));
+                th.style.width = newWidth + "px";
+            };
+
+            const onMouseUp = () => {
+                handle.classList.remove("active");
+                table.classList.remove("resizing");
+                document.removeEventListener("mousemove", onMouseMove);
+                document.removeEventListener("mouseup", onMouseUp);
+            };
+
+            document.addEventListener("mousemove", onMouseMove);
+            document.addEventListener("mouseup", onMouseUp);
+        });
+    });
+}
+
+// Re-init resize handles after each render
+const origRenderJobs = renderJobs;
+renderJobs = function() {
+    origRenderJobs();
+    initColumnResize();
+};
