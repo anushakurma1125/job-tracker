@@ -88,6 +88,18 @@ def init_db():
         if "visa_answer" not in existing_cols:
             cur.execute("ALTER TABLE jobs ADD COLUMN visa_answer TEXT DEFAULT ''")
             conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS resumes (
+                id SERIAL PRIMARY KEY,
+                filename TEXT NOT NULL,
+                label TEXT DEFAULT '',
+                file_data BYTEA NOT NULL,
+                file_size INTEGER NOT NULL,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
     else:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
@@ -116,6 +128,18 @@ def init_db():
         if "visa_answer" not in existing_cols:
             cur.execute("ALTER TABLE jobs ADD COLUMN visa_answer TEXT DEFAULT ''")
             conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS resumes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL,
+                label TEXT DEFAULT '',
+                file_data BLOB NOT NULL,
+                file_size INTEGER NOT NULL,
+                uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
 
     cur.close()
     conn.close()
@@ -268,6 +292,81 @@ def delete_job(job_id):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(f"DELETE FROM jobs WHERE id = {_ph()}", (job_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+# ── Resume CRUD ──
+
+def add_resume(filename, label, file_data, file_size):
+    conn = get_connection()
+    cur = conn.cursor()
+    if USE_POSTGRES:
+        import psycopg2
+        cur.execute(
+            f"""INSERT INTO resumes (filename, label, file_data, file_size)
+            VALUES ({_ph(4)}) RETURNING id, filename, label, file_size, uploaded_at""",
+            (filename, label, psycopg2.Binary(file_data), file_size),
+        )
+        resume = _fetchone(cur, conn)
+    else:
+        cur.execute(
+            f"""INSERT INTO resumes (filename, label, file_data, file_size)
+            VALUES ({_ph(4)})""",
+            (filename, label, file_data, file_size),
+        )
+        resume_id = cur.lastrowid
+        cur.execute(
+            f"SELECT id, filename, label, file_size, uploaded_at FROM resumes WHERE id = {_ph()}",
+            (resume_id,),
+        )
+        resume = _fetchone(cur, conn)
+    conn.commit()
+    cur.close()
+    conn.close()
+    return resume
+
+
+def get_resumes():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, filename, label, file_size, uploaded_at FROM resumes ORDER BY uploaded_at DESC")
+    resumes = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return resumes
+
+
+def get_resume_file(resume_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"SELECT filename, file_data FROM resumes WHERE id = {_ph()}", (resume_id,))
+    row = _fetchone(cur, conn)
+    cur.close()
+    conn.close()
+    return row
+
+
+def update_resume_label(resume_id, label):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE resumes SET label = {_ph()} WHERE id = {_ph()}", (label, resume_id))
+    conn.commit()
+    cur.execute(
+        f"SELECT id, filename, label, file_size, uploaded_at FROM resumes WHERE id = {_ph()}",
+        (resume_id,),
+    )
+    resume = _fetchone(cur, conn)
+    cur.close()
+    conn.close()
+    return resume
+
+
+def delete_resume(resume_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"DELETE FROM resumes WHERE id = {_ph()}", (resume_id,))
     conn.commit()
     cur.close()
     conn.close()

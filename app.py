@@ -1,8 +1,11 @@
 import os
+import io
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
 
-from database import init_db, add_job, get_jobs, get_job, update_job, delete_job, job_exists, get_existing_links, bulk_add_jobs
+from database import (init_db, add_job, get_jobs, get_job, update_job, delete_job,
+                       job_exists, get_existing_links, bulk_add_jobs,
+                       add_resume, get_resumes, get_resume_file, update_resume_label, delete_resume)
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -227,6 +230,72 @@ def update_single_job(job_id):
 def delete_single_job(job_id):
     delete_job(job_id)
     return jsonify({"message": "Job deleted"}), 200
+
+
+# ── Resume Routes ──
+
+@app.route("/api/resumes", methods=["GET"])
+@login_required
+def list_resumes():
+    resumes = get_resumes()
+    return jsonify(resumes)
+
+
+@app.route("/api/resumes", methods=["POST"])
+@login_required
+def upload_resume():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    file = request.files["file"]
+    if not file.filename.lower().endswith(".pdf"):
+        return jsonify({"error": "Only PDF files are allowed"}), 400
+    label = request.form.get("label", "").strip()
+    file_data = file.read()
+    file_size = len(file_data)
+    if file_size > 5 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 5 MB)"}), 400
+    if file_size == 0:
+        return jsonify({"error": "File is empty"}), 400
+    try:
+        resume = add_resume(file.filename, label, file_data, file_size)
+        return jsonify(resume), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/resumes/<int:resume_id>/download", methods=["GET"])
+@login_required
+def download_resume(resume_id):
+    row = get_resume_file(resume_id)
+    if not row:
+        return jsonify({"error": "Resume not found"}), 404
+    file_data = row["file_data"]
+    if isinstance(file_data, memoryview):
+        file_data = bytes(file_data)
+    return send_file(
+        io.BytesIO(file_data),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=row["filename"],
+    )
+
+
+@app.route("/api/resumes/<int:resume_id>", methods=["PUT"])
+@login_required
+def update_single_resume(resume_id):
+    data = request.get_json()
+    label = data.get("label", "").strip()
+    resume = update_resume_label(resume_id, label)
+    if not resume:
+        return jsonify({"error": "Resume not found"}), 404
+    return jsonify(resume)
+
+
+@app.route("/api/resumes/<int:resume_id>", methods=["DELETE"])
+@login_required
+def delete_single_resume(resume_id):
+    delete_resume(resume_id)
+    return jsonify({"message": "Resume deleted"}), 200
 
 
 if __name__ == "__main__":

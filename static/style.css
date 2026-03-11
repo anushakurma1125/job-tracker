@@ -116,6 +116,12 @@ body {
     user-select: none;
 }
 
+/* Resume table inside modal — no resize handles */
+#resumesList .table th {
+    position: static;
+    overflow: visible;
+}
+
 .job-description {
     white-space: pre-wrap;
     line-height: 1.7;

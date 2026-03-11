@@ -23,6 +23,9 @@
                 <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#bulkUploadModal">
                     <i class="bi bi-upload me-1"></i> Bulk Upload
                 </button>
+                <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#resumesModal">
+                    <i class="bi bi-file-earmark-pdf me-1"></i> Resumes
+                </button>
                 <a href="/logout" class="btn btn-outline-secondary">
                     <i class="bi bi-box-arrow-right"></i>
                 </a>
@@ -230,6 +233,53 @@
                     <button type="button" class="btn btn-primary" id="bulkSubmitBtn" onclick="bulkUpload()">
                         <i class="bi bi-upload me-1"></i> Upload & Import
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resumes Modal -->
+    <div class="modal fade" id="resumesModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-pdf me-2"></i>Resume Versions</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="card mb-3">
+                        <div class="card-body py-3">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-sm-5">
+                                    <label for="resumeFile" class="form-label small mb-1">PDF File</label>
+                                    <input type="file" class="form-control form-control-sm" id="resumeFile" accept=".pdf">
+                                </div>
+                                <div class="col-sm-5">
+                                    <label for="resumeLabel" class="form-label small mb-1">Label (optional)</label>
+                                    <input type="text" class="form-control form-control-sm" id="resumeLabel"
+                                           placeholder="e.g., Software Engineer v2">
+                                </div>
+                                <div class="col-sm-2">
+                                    <button class="btn btn-primary btn-sm w-100" id="uploadResumeBtn" onclick="uploadResume()">
+                                        <i class="bi bi-upload me-1"></i> Upload
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="resumeUploadStatus" class="d-none mt-2">
+                                <div class="d-flex align-items-center text-muted small">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                    <span>Uploading...</span>
+                                </div>
+                            </div>
+                            <div id="resumeUploadError" class="alert alert-danger py-1 mt-2 small d-none"></div>
+                        </div>
+                    </div>
+                    <div id="resumesList">
+                        <div class="text-center py-4 text-muted">
+                            <i class="bi bi-file-earmark-pdf" style="font-size: 2rem;"></i>
+                            <p class="mt-2 mb-0">No resumes uploaded yet.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

@@ -1,4 +1,5 @@
 let allJobs = [];
+let allResumes = [];
 let activeFilter = "";
 let sortCol = "";
 let sortAsc = true;
@@ -32,6 +33,12 @@ document.addEventListener("DOMContentLoaded", () => {
             searchQuery = e.target.value.toLowerCase();
             renderJobs();
         });
+    }
+
+    // Load resumes when modal opens
+    const resumesModal = document.getElementById("resumesModal");
+    if (resumesModal) {
+        resumesModal.addEventListener("show.bs.modal", () => loadResumes());
     }
 
     // Sortable headers
@@ -389,6 +396,112 @@ function escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ── Resume Management ──
+
+async function loadResumes() {
+    try {
+        const res = await fetch("/api/resumes");
+        allResumes = await res.json();
+        renderResumes();
+    } catch (err) {
+        document.getElementById("resumesList").innerHTML =
+            '<div class="alert alert-danger py-2 small">Failed to load resumes.</div>';
+    }
+}
+
+function renderResumes() {
+    const container = document.getElementById("resumesList");
+    if (allResumes.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-file-earmark-pdf" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0">No resumes uploaded yet.</p>
+            </div>`;
+        return;
+    }
+    container.innerHTML = `
+        <table class="table table-hover mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Filename</th>
+                    <th>Label</th>
+                    <th>Size</th>
+                    <th>Uploaded</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${allResumes.map(r => `
+                    <tr>
+                        <td class="small"><i class="bi bi-file-pdf text-danger me-1"></i>${escapeHtml(r.filename)}</td>
+                        <td class="small">${escapeHtml(r.label) || '<span class="text-muted">\u2014</span>'}</td>
+                        <td class="small text-muted">${formatFileSize(r.file_size)}</td>
+                        <td class="small text-muted">${formatDate(r.uploaded_at)}</td>
+                        <td class="text-end text-nowrap">
+                            <a href="/api/resumes/${r.id}/download" class="btn btn-sm btn-outline-primary me-1" title="Download">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteResume(${r.id})" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join("")}
+            </tbody>
+        </table>`;
+}
+
+function formatFileSize(bytes) {
+    if (!bytes) return "0 B";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+async function uploadResume() {
+    const fileInput = document.getElementById("resumeFile");
+    const labelInput = document.getElementById("resumeLabel");
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const btn = document.getElementById("uploadResumeBtn");
+    const statusEl = document.getElementById("resumeUploadStatus");
+    const errorEl = document.getElementById("resumeUploadError");
+
+    btn.disabled = true;
+    statusEl.classList.remove("d-none");
+    errorEl.classList.add("d-none");
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("label", labelInput.value.trim());
+
+    try {
+        const res = await fetch("/api/resumes", {
+            method: "POST",
+            body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+
+        fileInput.value = "";
+        labelInput.value = "";
+        loadResumes();
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("d-none");
+    } finally {
+        btn.disabled = false;
+        statusEl.classList.add("d-none");
+    }
+}
+
+async function deleteResume(id) {
+    if (!confirm("Delete this resume version?")) return;
+    await fetch(`/api/resumes/${id}`, { method: "DELETE" });
+    loadResumes();
 }
 
 // ── Column Resizing ──
