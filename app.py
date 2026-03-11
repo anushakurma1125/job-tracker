@@ -2,7 +2,7 @@ import os
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 
-from database import init_db, add_job, get_jobs, get_job, update_job, delete_job, job_exists
+from database import init_db, add_job, get_jobs, get_job, update_job, delete_job, job_exists, get_existing_links, bulk_add_jobs
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -140,8 +140,8 @@ def bulk_upload():
             elif "visa" in h:
                 col_map["visa_answer"] = i
 
-        added = 0
-        skipped = 0
+        # First pass: parse all rows from the spreadsheet
+        parsed_rows = []
         errors = []
 
         for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
@@ -151,16 +151,10 @@ def bulk_upload():
                         val = row[col_map[key]]
                         if val is None:
                             return ""
-                        # Handle datetime objects from Excel — strip time
                         if hasattr(val, 'strftime'):
                             return val.strftime("%Y-%m-%d")
                         return str(val).strip()
                     return ""
-
-                link = get_val("link")
-                if link and job_exists(link):
-                    skipped += 1
-                    continue
 
                 job_data = {
                     "applied_date": get_val("applied_date"),
@@ -168,22 +162,37 @@ def bulk_upload():
                     "role": get_val("role"),
                     "posted_on": get_val("posted_on"),
                     "job_description": get_val("job_description"),
-                    "link": link,
+                    "link": get_val("link"),
                     "status": get_val("status") or "Applied",
                     "comment": get_val("comment"),
                     "visa_answer": get_val("visa_answer"),
                 }
 
-                # Skip empty rows
                 if not job_data["company"] and not job_data["role"] and not job_data["link"]:
                     continue
 
-                add_job(job_data)
-                added += 1
+                parsed_rows.append(job_data)
             except Exception as e:
                 errors.append(f"Row {row_num}: {str(e)}")
 
         wb.close()
+
+        # Single DB call: check all existing links at once
+        all_links = [r["link"] for r in parsed_rows if r["link"]]
+        existing_links = get_existing_links(all_links) if all_links else set()
+
+        # Split into new vs duplicate
+        to_insert = []
+        skipped = 0
+        for row_data in parsed_rows:
+            if row_data["link"] and row_data["link"] in existing_links:
+                skipped += 1
+            else:
+                to_insert.append(row_data)
+
+        # Single DB call: batch insert all new jobs
+        added = bulk_add_jobs(to_insert)
+
         return jsonify({
             "added": added,
             "skipped": skipped,

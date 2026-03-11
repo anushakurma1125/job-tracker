@@ -171,6 +171,51 @@ def add_job(data):
     return job
 
 
+def get_existing_links(links):
+    """Check which links already exist in one query."""
+    if not links:
+        return set()
+    conn = get_connection()
+    cur = conn.cursor()
+    placeholders = ", ".join([_ph()] * len(links))
+    cur.execute(f"SELECT link FROM jobs WHERE link IN ({placeholders})", tuple(links))
+    existing = {row[0] for row in cur.fetchall()}
+    cur.close()
+    conn.close()
+    return existing
+
+
+def bulk_add_jobs(jobs_data):
+    """Insert multiple jobs in a single connection with batch inserts."""
+    if not jobs_data:
+        return 0
+    conn = get_connection()
+    cur = conn.cursor()
+    added = 0
+    for data in jobs_data:
+        values = (
+            data.get("applied_date", datetime.now().strftime("%Y-%m-%d")),
+            data.get("company", ""),
+            data.get("role", ""),
+            data.get("posted_on", ""),
+            data.get("job_description", ""),
+            data.get("link", ""),
+            data.get("status", "Applied"),
+            data.get("comment", ""),
+            data.get("visa_answer", ""),
+        )
+        cur.execute(
+            f"""INSERT INTO jobs (applied_date, company, role, posted_on, job_description, link, status, comment, visa_answer)
+            VALUES ({_ph(9)})""",
+            values,
+        )
+        added += 1
+    conn.commit()
+    cur.close()
+    conn.close()
+    return added
+
+
 def get_jobs(status=None):
     conn = get_connection()
     cur = conn.cursor()
