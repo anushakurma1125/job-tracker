@@ -1,11 +1,16 @@
 import os
 import io
+import json
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
 
 from database import (init_db, add_job, get_jobs, get_job, update_job, delete_job,
                        job_exists, get_existing_links, bulk_add_jobs,
-                       add_resume, get_resumes, get_resume_file, update_resume_label, delete_resume)
+                       add_resume, get_resumes, get_resume_file, update_resume_label, delete_resume,
+                       get_email_settings, save_email_settings, get_gmail_credentials,
+                       update_last_scanned, delete_email_settings,
+                       get_earliest_applied_date, get_active_jobs,
+                       add_scan_log, get_scan_logs)
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -296,6 +301,177 @@ def update_single_resume(resume_id):
 def delete_single_resume(resume_id):
     delete_resume(resume_id)
     return jsonify({"message": "Resume deleted"}), 200
+
+
+# ── Email Settings & Scan Routes ──
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+@app.route("/api/settings/email", methods=["GET"])
+@login_required
+def get_email_status():
+    settings = get_email_settings()
+    if not settings or not settings.get("enabled"):
+        return jsonify({"connected": False, "configured": bool(GOOGLE_CLIENT_ID)})
+    return jsonify({
+        "connected": True,
+        "configured": True,
+        "email": settings.get("gmail_email", ""),
+        "last_scanned_at": settings.get("last_scanned_at", ""),
+    })
+
+
+@app.route("/api/settings/email/auth-url", methods=["GET"])
+@login_required
+def get_auth_url():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return jsonify({"error": "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."}), 400
+
+    from google_auth_oauthlib.flow import Flow
+
+    # Determine the redirect URI based on the request
+    redirect_uri = request.url_root.rstrip("/") + "/api/settings/email/oauth-callback"
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri],
+            }
+        },
+        scopes=GMAIL_SCOPES,
+        redirect_uri=redirect_uri,
+    )
+
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    session["oauth_state"] = state
+    return jsonify({"auth_url": auth_url})
+
+
+@app.route("/api/settings/email/oauth-callback")
+@login_required
+def oauth_callback():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return "OAuth not configured", 400
+
+    from google_auth_oauthlib.flow import Flow
+
+    redirect_uri = request.url_root.rstrip("/") + "/api/settings/email/oauth-callback"
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri],
+            }
+        },
+        scopes=GMAIL_SCOPES,
+        redirect_uri=redirect_uri,
+        state=session.get("oauth_state"),
+    )
+
+    flow.fetch_token(authorization_response=request.url)
+    creds = flow.credentials
+
+    # Get user's email address
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=creds)
+    profile = service.users().getProfile(userId="me").execute()
+    gmail_email = profile.get("emailAddress", "")
+
+    # Store credentials
+    creds_data = {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": list(creds.scopes) if creds.scopes else GMAIL_SCOPES,
+    }
+    save_email_settings(json.dumps(creds_data), gmail_email)
+
+    # Redirect back to the app (Settings page)
+    return redirect("/#settings-connected")
+
+
+@app.route("/api/settings/email/disconnect", methods=["POST"])
+@login_required
+def disconnect_email():
+    delete_email_settings()
+    return jsonify({"message": "Email disconnected"})
+
+
+@app.route("/api/settings/email/scan", methods=["POST"])
+@login_required
+def trigger_scan():
+    from email_scanner import scan_for_rejections
+
+    creds_json = get_gmail_credentials()
+    if not creds_json:
+        return jsonify({"error": "Gmail not connected. Go to Settings to connect your email."}), 400
+
+    settings = get_email_settings()
+    jobs = get_active_jobs()
+    if not jobs:
+        return jsonify({"emails_checked": 0, "rejections_found": 0, "details": [], "message": "No active jobs to check."}), 200
+
+    # Determine scan start date (delta logic)
+    since_date = None
+    if settings and settings.get("last_scanned_at"):
+        since_date = settings["last_scanned_at"]
+    else:
+        since_date = get_earliest_applied_date()
+
+    if not since_date:
+        since_date = "2024-01-01"
+
+    try:
+        result = scan_for_rejections(creds_json, jobs, since_date)
+
+        # Update matched jobs to Rejected
+        for match in result.get("details", []):
+            job_id = match["job_id"]
+            update_job(job_id, {
+                "status": "Rejected",
+                "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
+            })
+
+        # Save scan log
+        add_scan_log(
+            result["emails_checked"],
+            result["rejections_found"],
+            json.dumps(result["details"]),
+        )
+
+        # Update last scanned timestamp
+        update_last_scanned()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Scan failed: {str(e)}"}), 500
+
+
+@app.route("/api/settings/email/logs", methods=["GET"])
+@login_required
+def list_scan_logs():
+    logs = get_scan_logs()
+    return jsonify(logs)
 
 
 if __name__ == "__main__":

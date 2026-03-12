@@ -100,6 +100,30 @@ def init_db():
             )
         """)
         conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_settings (
+                id SERIAL PRIMARY KEY,
+                gmail_credentials TEXT DEFAULT '',
+                gmail_email TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 0,
+                last_scanned_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scan_log (
+                id SERIAL PRIMARY KEY,
+                scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                emails_checked INTEGER DEFAULT 0,
+                rejections_found INTEGER DEFAULT 0,
+                details TEXT DEFAULT '[]',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
     else:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
@@ -137,6 +161,30 @@ def init_db():
                 file_data BLOB NOT NULL,
                 file_size INTEGER NOT NULL,
                 uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gmail_credentials TEXT DEFAULT '',
+                gmail_email TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 0,
+                last_scanned_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scan_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scanned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                emails_checked INTEGER DEFAULT 0,
+                rejections_found INTEGER DEFAULT 0,
+                details TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
@@ -370,3 +418,118 @@ def delete_resume(resume_id):
     conn.commit()
     cur.close()
     conn.close()
+
+
+# ── Email Settings CRUD ──
+
+def get_email_settings():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, gmail_email, enabled, last_scanned_at, created_at FROM email_settings ORDER BY id LIMIT 1")
+    row = _fetchone(cur, conn)
+    cur.close()
+    conn.close()
+    return row
+
+
+def save_email_settings(gmail_credentials, gmail_email):
+    conn = get_connection()
+    cur = conn.cursor()
+    # Check if settings exist
+    cur.execute("SELECT id FROM email_settings LIMIT 1")
+    existing = cur.fetchone()
+    if existing:
+        row_id = existing[0] if not isinstance(existing, dict) else existing["id"]
+        cur.execute(
+            f"UPDATE email_settings SET gmail_credentials = {_ph()}, gmail_email = {_ph()}, enabled = 1 WHERE id = {_ph()}",
+            (gmail_credentials, gmail_email, row_id),
+        )
+    else:
+        cur.execute(
+            f"INSERT INTO email_settings (gmail_credentials, gmail_email, enabled) VALUES ({_ph(3)})",
+            (gmail_credentials, gmail_email, 1),
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_gmail_credentials():
+    """Return the raw gmail_credentials JSON string."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT gmail_credentials FROM email_settings WHERE enabled = 1 LIMIT 1")
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    return row[0] if not isinstance(row, dict) else row.get("gmail_credentials")
+
+
+def update_last_scanned():
+    conn = get_connection()
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(f"UPDATE email_settings SET last_scanned_at = {_ph()}", (now,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def delete_email_settings():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM email_settings")
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_earliest_applied_date():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT MIN(applied_date) FROM jobs")
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    val = row[0] if not isinstance(row, dict) else list(row.values())[0]
+    return val
+
+
+def get_active_jobs():
+    """Get jobs that are not rejected or withdrawn (candidates for status update)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM jobs WHERE status NOT IN ('Rejected', 'Withdrawn') ORDER BY created_at DESC")
+    jobs = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return jobs
+
+
+# ── Scan Log CRUD ──
+
+def add_scan_log(emails_checked, rejections_found, details_json):
+    conn = get_connection()
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        f"INSERT INTO scan_log (scanned_at, emails_checked, rejections_found, details) VALUES ({_ph(4)})",
+        (now, emails_checked, rejections_found, details_json),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_scan_logs(limit=20):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM scan_log ORDER BY scanned_at DESC LIMIT {_ph()}", (limit,))
+    logs = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return logs

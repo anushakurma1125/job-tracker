@@ -34,6 +34,12 @@
                     <span class="sidebar-text">Resumes</span>
                     <span class="sidebar-badge" id="sidebarResumeCount">0</span>
                 </a>
+
+                <div class="sidebar-section-label sidebar-text">Configuration</div>
+                <a href="#" class="sidebar-link" data-section="settings" onclick="switchSection('settings', this)">
+                    <i class="bi bi-gear"></i>
+                    <span class="sidebar-text">Settings</span>
+                </a>
             </div>
 
             <div class="sidebar-footer">
@@ -63,6 +69,9 @@
                         <p class="text-muted mb-0 small">Track and manage your job applications</p>
                     </div>
                     <div class="d-flex gap-2">
+                        <button class="btn btn-outline-warning d-none" id="scanEmailBtn" onclick="triggerEmailScan()">
+                            <i class="bi bi-envelope-check me-1"></i> Check for job updates
+                        </button>
                         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addJobModal">
                             <i class="bi bi-plus-lg me-1"></i> Add Job
                         </button>
@@ -71,6 +80,9 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Scan result alert -->
+                <div id="scanResultAlert" class="d-none"></div>
 
                 <!-- Stats Row -->
                 <div class="row g-3 mb-4" id="statsRow">
@@ -184,6 +196,89 @@
                         <i class="bi bi-file-earmark-pdf" style="font-size: 3rem;"></i>
                         <p class="mt-3 mb-0 fs-5">No resumes uploaded yet</p>
                         <p class="text-muted small">Upload your first resume to get started</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════ -->
+            <!-- SETTINGS SECTION -->
+            <!-- ═══════════════════════════════════════════════ -->
+            <div class="content-section" id="section-settings">
+                <!-- Settings Header -->
+                <div class="content-header">
+                    <div>
+                        <h1 class="h4 mb-0 fw-bold">Settings</h1>
+                        <p class="text-muted mb-0 small">Configure integrations and preferences</p>
+                    </div>
+                </div>
+
+                <!-- Email Integration Card -->
+                <div class="card settings-card mb-4">
+                    <div class="card-body">
+                        <div class="d-flex align-items-start gap-3 mb-3">
+                            <div class="settings-icon-box">
+                                <i class="bi bi-envelope-at"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <h5 class="mb-1 fw-bold">Email Integration</h5>
+                                <p class="text-muted small mb-0">Connect your Gmail to automatically detect rejection emails and update job statuses.</p>
+                            </div>
+                        </div>
+
+                        <!-- Not Connected State -->
+                        <div id="emailNotConnected">
+                            <div class="alert alert-light border mb-3">
+                                <div class="d-flex align-items-start gap-2">
+                                    <i class="bi bi-info-circle text-primary mt-1"></i>
+                                    <div class="small">
+                                        <strong>How it works:</strong> Once connected, click "Check for job updates" on the Applications page.
+                                        We'll scan your inbox for rejection emails and automatically update matching job statuses.
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="emailNotConfigured" class="d-none">
+                                <div class="alert alert-warning py-2 small mb-3">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                    Google OAuth credentials not configured. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> environment variables.
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="connectGmailBtn" onclick="connectGmail()">
+                                <i class="bi bi-google me-1"></i> Connect Gmail
+                            </button>
+                        </div>
+
+                        <!-- Connected State -->
+                        <div id="emailConnected" class="d-none">
+                            <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 mb-3">
+                                <div class="settings-status-dot bg-success"></div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold" id="connectedEmail">—</div>
+                                    <div class="text-muted small">
+                                        Last scanned: <span id="lastScannedAt">Never</span>
+                                    </div>
+                                </div>
+                                <button class="btn btn-outline-primary btn-sm" onclick="triggerEmailScan()">
+                                    <i class="bi bi-envelope-check me-1"></i> Scan Now
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" onclick="disconnectGmail()">
+                                    <i class="bi bi-x-circle me-1"></i> Disconnect
+                                </button>
+                            </div>
+                            <div id="settingsScanResult" class="d-none"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan History Card -->
+                <div class="card settings-card">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <i class="bi bi-clock-history text-muted"></i>
+                            <h5 class="mb-0 fw-bold">Scan History</h5>
+                        </div>
+                        <div id="scanLogsContainer">
+                            <p class="text-muted small">No scans yet. Connect your email and run a scan to see history here.</p>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -14,6 +14,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     loadJobs();
     loadResumes();
+    checkEmailConnection();
+
+    // Handle OAuth redirect hash
+    if (window.location.hash === "#settings-connected") {
+        window.location.hash = "";
+        setTimeout(() => {
+            switchSection("settings", document.querySelector('.sidebar-link[data-section="settings"]'));
+        }, 300);
+    }
 
     // Stat card filters
     document.querySelectorAll(".stat-card").forEach(card => {
@@ -89,6 +98,9 @@ function switchSection(section, linkEl) {
     // Load data for the section
     if (section === "resumes") {
         loadResumes();
+    } else if (section === "settings") {
+        loadSettings();
+        loadScanLogs();
     }
 }
 
@@ -634,3 +646,236 @@ renderJobs = function() {
     origRenderJobs();
     initColumnResize();
 };
+
+// ── Email Settings & Scan ──
+
+async function checkEmailConnection() {
+    try {
+        const res = await fetch("/api/settings/email");
+        const data = await res.json();
+        const btn = document.getElementById("scanEmailBtn");
+        if (btn && data.connected) {
+            btn.classList.remove("d-none");
+        }
+    } catch (e) {
+        // Silently fail — button stays hidden
+    }
+}
+
+async function loadSettings() {
+    try {
+        const res = await fetch("/api/settings/email");
+        const data = await res.json();
+
+        const notConnected = document.getElementById("emailNotConnected");
+        const connected = document.getElementById("emailConnected");
+        const notConfigured = document.getElementById("emailNotConfigured");
+        const connectBtn = document.getElementById("connectGmailBtn");
+
+        if (data.connected) {
+            notConnected.classList.add("d-none");
+            connected.classList.remove("d-none");
+            document.getElementById("connectedEmail").textContent = data.email || "Connected";
+            document.getElementById("lastScannedAt").textContent =
+                data.last_scanned_at ? formatDateTime(data.last_scanned_at) : "Never";
+        } else {
+            notConnected.classList.remove("d-none");
+            connected.classList.add("d-none");
+            if (!data.configured) {
+                notConfigured.classList.remove("d-none");
+                connectBtn.disabled = true;
+            } else {
+                notConfigured.classList.add("d-none");
+                connectBtn.disabled = false;
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load settings:", e);
+    }
+}
+
+function formatDateTime(dt) {
+    if (!dt) return "Never";
+    try {
+        const d = new Date(dt);
+        return d.toLocaleDateString("en-US", {
+            month: "short", day: "numeric", year: "numeric",
+            hour: "numeric", minute: "2-digit"
+        });
+    } catch (e) {
+        return dt;
+    }
+}
+
+async function connectGmail() {
+    try {
+        const res = await fetch("/api/settings/email/auth-url");
+        const data = await res.json();
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+        // Open Google OAuth in same window
+        window.location.href = data.auth_url;
+    } catch (e) {
+        alert("Failed to start Gmail connection. Please try again.");
+    }
+}
+
+async function disconnectGmail() {
+    if (!confirm("Disconnect your Gmail? You won't be able to scan for rejection emails until you reconnect.")) return;
+
+    try {
+        await fetch("/api/settings/email/disconnect", { method: "POST" });
+        // Hide the scan button on jobs page
+        const btn = document.getElementById("scanEmailBtn");
+        if (btn) btn.classList.add("d-none");
+        loadSettings();
+    } catch (e) {
+        alert("Failed to disconnect. Please try again.");
+    }
+}
+
+async function triggerEmailScan() {
+    const scanBtn = document.getElementById("scanEmailBtn");
+    const settingsBtn = document.querySelector("#emailConnected .btn-outline-primary");
+
+    // Show loading state on both buttons
+    const origBtnHtml = scanBtn ? scanBtn.innerHTML : "";
+    const origSettingsHtml = settingsBtn ? settingsBtn.innerHTML : "";
+
+    if (scanBtn) {
+        scanBtn.disabled = true;
+        scanBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
+    }
+    if (settingsBtn) {
+        settingsBtn.disabled = true;
+        settingsBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
+    }
+
+    try {
+        const res = await fetch("/api/settings/email/scan", { method: "POST" });
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.error || "Scan failed");
+        }
+
+        // Show result toast
+        showScanResult(data);
+
+        // Reload jobs if any rejections were found
+        if (data.rejections_found > 0) {
+            loadJobs();
+        }
+
+        // Reload settings to update last scanned time
+        loadSettings();
+        loadScanLogs();
+
+    } catch (e) {
+        showScanResult({ error: e.message });
+    } finally {
+        if (scanBtn) {
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = origBtnHtml;
+        }
+        if (settingsBtn) {
+            settingsBtn.disabled = false;
+            settingsBtn.innerHTML = origSettingsHtml;
+        }
+    }
+}
+
+function showScanResult(data) {
+    // Show in the jobs page toast area
+    const alertEl = document.getElementById("scanResultAlert");
+    // Show in settings page area
+    const settingsEl = document.getElementById("settingsScanResult");
+
+    let html = "";
+    if (data.error) {
+        html = `<div class="alert alert-danger alert-dismissible fade show py-2 mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle me-1"></i> ${escapeHtml(data.error)}
+            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+        </div>`;
+    } else if (data.rejections_found > 0) {
+        const details = data.details.map(d =>
+            `<li>${escapeHtml(d.job_company)} — ${escapeHtml(d.job_role)}</li>`
+        ).join("");
+        html = `<div class="alert alert-warning alert-dismissible fade show py-2 mb-3" role="alert">
+            <strong><i class="bi bi-envelope-check me-1"></i> Found ${data.rejections_found} rejection${data.rejections_found > 1 ? 's' : ''}</strong>
+            <span class="text-muted small ms-1">(${data.emails_checked} emails scanned)</span>
+            <ul class="mb-0 mt-1 small">${details}</ul>
+            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+        </div>`;
+    } else {
+        html = `<div class="alert alert-success alert-dismissible fade show py-2 mb-3" role="alert">
+            <i class="bi bi-check-circle me-1"></i> No new rejections found.
+            <span class="text-muted small">(${data.emails_checked} emails scanned)</span>
+            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+        </div>`;
+    }
+
+    if (alertEl) {
+        alertEl.innerHTML = html;
+        alertEl.classList.remove("d-none");
+    }
+    if (settingsEl) {
+        settingsEl.innerHTML = html;
+        settingsEl.classList.remove("d-none");
+    }
+}
+
+async function loadScanLogs() {
+    try {
+        const res = await fetch("/api/settings/email/logs");
+        const logs = await res.json();
+
+        const container = document.getElementById("scanLogsContainer");
+        if (!container) return;
+
+        if (!logs || logs.length === 0) {
+            container.innerHTML = '<p class="text-muted small mb-0">No scans yet. Connect your email and run a scan to see history here.</p>';
+            return;
+        }
+
+        let html = `<div class="table-responsive">
+            <table class="table scan-log-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Emails Checked</th>
+                        <th>Rejections Found</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        logs.forEach(log => {
+            let detailsHtml = "—";
+            try {
+                const details = typeof log.details === "string" ? JSON.parse(log.details) : log.details;
+                if (details && details.length > 0) {
+                    detailsHtml = details.map(d =>
+                        `<span class="badge bg-light text-dark me-1">${escapeHtml(d.job_company || d.company_matched || "")}</span>`
+                    ).join("");
+                }
+            } catch (e) { /* ignore parse errors */ }
+
+            html += `<tr>
+                <td>${formatDateTime(log.scanned_at)}</td>
+                <td>${log.emails_checked}</td>
+                <td>${log.rejections_found > 0
+                    ? `<span class="text-warning fw-semibold">${log.rejections_found}</span>`
+                    : '<span class="text-success">0</span>'}</td>
+                <td>${detailsHtml}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>`;
+        container.innerHTML = html;
+    } catch (e) {
+        console.error("Failed to load scan logs:", e);
+    }
+}
