@@ -53,6 +53,23 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
+// ── Sidebar Toggle ──
+
+function toggleSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    sidebar.classList.toggle("collapsed");
+    // Persist preference
+    localStorage.setItem("sidebarCollapsed", sidebar.classList.contains("collapsed"));
+}
+
+// Restore sidebar state on load
+(function restoreSidebar() {
+    if (localStorage.getItem("sidebarCollapsed") === "true") {
+        const sidebar = document.getElementById("sidebar");
+        if (sidebar) sidebar.classList.add("collapsed");
+    }
+})();
+
 // ── Section Navigation ──
 
 function switchSection(section, linkEl) {

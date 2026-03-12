@@ -25,6 +25,12 @@ body {
     left: 0;
     top: 0;
     z-index: 100;
+    transition: width 0.25s ease, min-width 0.25s ease;
+}
+
+.sidebar.collapsed {
+    width: 64px;
+    min-width: 64px;
 }
 
 .sidebar-brand {
@@ -35,11 +41,86 @@ body {
     display: flex;
     align-items: center;
     border-bottom: 1px solid rgba(255,255,255,0.08);
+    position: relative;
 }
 
 .sidebar-brand i {
     font-size: 1.25rem;
     color: #6ea8fe;
+    flex-shrink: 0;
+}
+
+.sidebar-toggle {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #6c757d;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e6edf3;
+}
+
+.sidebar.collapsed .sidebar-toggle i {
+    transform: rotate(180deg);
+}
+
+.sidebar.collapsed .sidebar-brand {
+    padding: 20px 0 16px;
+    justify-content: center;
+}
+
+.sidebar.collapsed .sidebar-brand > i.bi-briefcase-fill {
+    margin-right: 0 !important;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #1a1d23;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    z-index: 101;
+}
+
+/* Hide text elements when collapsed */
+.sidebar.collapsed .sidebar-text {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-badge {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-nav {
+    padding: 12px 8px;
+}
+
+.sidebar.collapsed .sidebar-link {
+    justify-content: center;
+    padding: 10px;
+    gap: 0;
+}
+
+.sidebar.collapsed .sidebar-link i {
+    width: auto;
+}
+
+.sidebar.collapsed .sidebar-footer {
+    padding: 12px 8px;
 }
 
 .sidebar-nav {
@@ -115,6 +196,11 @@ body {
     padding: 24px 32px;
     overflow-y: auto;
     height: 100vh;
+    transition: margin-left 0.25s ease;
+}
+
+.sidebar.collapsed ~ .main-content {
+    margin-left: 64px;
 }
 
 .content-header {
@@ -147,21 +233,15 @@ body {
     gap: 10px;
 }
 
-.greeting-wave {
+.greeting-emoji {
     font-size: 1.4rem;
-    animation: wave 2s ease-in-out infinite;
     display: inline-block;
-    transform-origin: 70% 70%;
+    animation: flex-pulse 2s ease-in-out infinite;
 }
 
-@keyframes wave {
-    0%, 100% { transform: rotate(0deg); }
-    10% { transform: rotate(14deg); }
-    20% { transform: rotate(-8deg); }
-    30% { transform: rotate(14deg); }
-    40% { transform: rotate(-4deg); }
-    50% { transform: rotate(10deg); }
-    60% { transform: rotate(0deg); }
+@keyframes flex-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
 }
 
 /* ── Stat Cards ── */
