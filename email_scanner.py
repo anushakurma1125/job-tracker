@@ -35,12 +35,17 @@ def _build_gmail_service(credentials_json):
 
 
 def _epoch_from_date(date_str):
-    """Convert a date string (YYYY-MM-DD) to epoch seconds."""
+    """Convert a date string (YYYY-MM-DD) or datetime object to epoch seconds."""
     if not date_str:
         return None
     try:
-        # Handle "YYYY-MM-DD HH:MM:SS" format too
-        date_str = date_str.split(" ")[0]
+        # Handle datetime/date objects directly (e.g. from PostgreSQL)
+        if hasattr(date_str, "timestamp"):
+            return int(date_str.timestamp())
+        if hasattr(date_str, "strftime"):
+            date_str = date_str.strftime("%Y-%m-%d")
+        # Handle "YYYY-MM-DD HH:MM:SS" string format
+        date_str = str(date_str).split(" ")[0]
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         return int(dt.timestamp())
     except (ValueError, TypeError):
@@ -143,12 +148,19 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     if epoch:
         query = f"after:{epoch} {query}"
 
-    # Search Gmail
-    results = service.users().messages().list(
-        userId="me", q=query, maxResults=50
-    ).execute()
+    # Search Gmail with pagination
+    messages = []
+    page_token = None
+    while True:
+        kwargs = {"userId": "me", "q": query, "maxResults": 100}
+        if page_token:
+            kwargs["pageToken"] = page_token
+        results = service.users().messages().list(**kwargs).execute()
+        messages.extend(results.get("messages", []))
+        page_token = results.get("nextPageToken")
+        if not page_token or len(messages) >= 500:
+            break
 
-    messages = results.get("messages", [])
     if not messages:
         return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
@@ -166,8 +178,16 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     # Extract company names from jobs for matching
     companies = [j.get("company", "") for j in jobs]
 
-    # Classify with Claude (batch all emails at once)
-    classifications = _classify_with_claude(emails, companies)
+    # Classify with Claude in batches of 20 to avoid context limits
+    BATCH_SIZE = 20
+    classifications = []
+    for batch_start in range(0, len(emails), BATCH_SIZE):
+        batch = emails[batch_start:batch_start + BATCH_SIZE]
+        batch_results = _classify_with_claude(batch, companies)
+        # Adjust indices to be global
+        for result in batch_results:
+            result["index"] = result.get("index", -1) + batch_start
+        classifications.extend(batch_results)
 
     # Match rejections to jobs
     details = []

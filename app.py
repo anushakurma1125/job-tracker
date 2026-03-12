@@ -3,6 +3,7 @@ import io
 import json
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from database import (init_db, add_job, get_jobs, get_job, update_job, delete_job,
                        job_exists, get_existing_links, bulk_add_jobs,
@@ -10,7 +11,8 @@ from database import (init_db, add_job, get_jobs, get_job, update_job, delete_jo
                        get_email_settings, save_email_settings, get_gmail_credentials,
                        update_last_scanned, delete_email_settings,
                        get_earliest_applied_date, get_active_jobs,
-                       add_scan_log, get_scan_logs)
+                       add_scan_log, get_scan_logs,
+                       create_user, get_user_by_username)
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -34,15 +36,11 @@ def handle_500(e):
         return jsonify({"error": "Internal server error"}), 500
     return e
 
-# Auth credentials from environment variables
-APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "password")
-
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
+        if not session.get("user_id"):
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify({"error": "Unauthorized"}), 401
             return redirect(url_for("login"))
@@ -50,35 +48,73 @@ def login_required(f):
     return decorated
 
 
+def current_user_id():
+    return session["user_id"]
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if session.get("user_id"):
+        return redirect(url_for("index"))
     if request.method == "POST":
-        username = request.form.get("username", "")
+        username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        if username == APP_USERNAME and password == APP_PASSWORD:
-            session["logged_in"] = True
+        user = get_user_by_username(username)
+        if user and check_password_hash(user["password_hash"], password):
+            session["user_id"] = user["id"]
+            session["display_name"] = user["display_name"] or user["username"]
             return redirect(url_for("index"))
         return render_template("login.html", error="Invalid username or password")
     return render_template("login.html")
 
 
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if session.get("user_id"):
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        display_name = request.form.get("display_name", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if not username or not password:
+            return render_template("signup.html", error="Username and password are required")
+        if len(password) < 6:
+            return render_template("signup.html", error="Password must be at least 6 characters")
+        if password != confirm:
+            return render_template("signup.html", error="Passwords do not match")
+
+        existing = get_user_by_username(username)
+        if existing:
+            return render_template("signup.html", error="Username already taken")
+
+        password_hash = generate_password_hash(password)
+        user = create_user(username, password_hash, display_name or username)
+
+        session["user_id"] = user["id"]
+        session["display_name"] = user["display_name"]
+        return redirect(url_for("index"))
+    return render_template("signup.html")
+
+
 @app.route("/logout")
 def logout():
-    session.pop("logged_in", None)
+    session.clear()
     return redirect(url_for("login"))
 
 
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return render_template("index.html", display_name=session.get("display_name", ""))
 
 
 @app.route("/api/jobs", methods=["GET"])
 @login_required
 def list_jobs():
     status = request.args.get("status")
-    jobs = get_jobs(status=status)
+    jobs = get_jobs(current_user_id(), status=status)
     return jsonify(jobs)
 
 
@@ -94,11 +130,11 @@ def create_job():
         if not link:
             return jsonify({"error": "Job link is required"}), 400
 
-        if job_exists(link):
+        if job_exists(link, current_user_id()):
             return jsonify({"error": "This job link has already been added"}), 409
 
         extracted = extract_job_details(link)
-        job = add_job(extracted)
+        job = add_job(extracted, current_user_id())
         return jsonify(job), 201
     except Exception as e:
         import traceback
@@ -186,8 +222,9 @@ def bulk_upload():
         wb.close()
 
         # Single DB call: check all existing links at once
+        uid = current_user_id()
         all_links = [r["link"] for r in parsed_rows if r["link"]]
-        existing_links = get_existing_links(all_links) if all_links else set()
+        existing_links = get_existing_links(all_links, uid) if all_links else set()
 
         # Split into new vs duplicate
         to_insert = []
@@ -199,7 +236,7 @@ def bulk_upload():
                 to_insert.append(row_data)
 
         # Single DB call: batch insert all new jobs
-        added = bulk_add_jobs(to_insert)
+        added = bulk_add_jobs(to_insert, uid)
 
         return jsonify({
             "added": added,
@@ -214,7 +251,7 @@ def bulk_upload():
 @app.route("/api/jobs/<int:job_id>", methods=["GET"])
 @login_required
 def get_single_job(job_id):
-    job = get_job(job_id)
+    job = get_job(job_id, current_user_id())
     if not job:
         return jsonify({"error": "Job not found"}), 404
     return jsonify(job)
@@ -224,7 +261,7 @@ def get_single_job(job_id):
 @login_required
 def update_single_job(job_id):
     data = request.get_json()
-    job = update_job(job_id, data)
+    job = update_job(job_id, data, current_user_id())
     if not job:
         return jsonify({"error": "Job not found"}), 404
     return jsonify(job)
@@ -233,7 +270,7 @@ def update_single_job(job_id):
 @app.route("/api/jobs/<int:job_id>", methods=["DELETE"])
 @login_required
 def delete_single_job(job_id):
-    delete_job(job_id)
+    delete_job(job_id, current_user_id())
     return jsonify({"message": "Job deleted"}), 200
 
 
@@ -242,7 +279,7 @@ def delete_single_job(job_id):
 @app.route("/api/resumes", methods=["GET"])
 @login_required
 def list_resumes():
-    resumes = get_resumes()
+    resumes = get_resumes(current_user_id())
     return jsonify(resumes)
 
 
@@ -262,7 +299,7 @@ def upload_resume():
     if file_size == 0:
         return jsonify({"error": "File is empty"}), 400
     try:
-        resume = add_resume(file.filename, label, file_data, file_size)
+        resume = add_resume(file.filename, label, file_data, file_size, current_user_id())
         return jsonify(resume), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -271,7 +308,7 @@ def upload_resume():
 @app.route("/api/resumes/<int:resume_id>/download", methods=["GET"])
 @login_required
 def download_resume(resume_id):
-    row = get_resume_file(resume_id)
+    row = get_resume_file(resume_id, current_user_id())
     if not row:
         return jsonify({"error": "Resume not found"}), 404
     file_data = row["file_data"]
@@ -290,7 +327,7 @@ def download_resume(resume_id):
 def update_single_resume(resume_id):
     data = request.get_json()
     label = data.get("label", "").strip()
-    resume = update_resume_label(resume_id, label)
+    resume = update_resume_label(resume_id, label, current_user_id())
     if not resume:
         return jsonify({"error": "Resume not found"}), 404
     return jsonify(resume)
@@ -299,7 +336,7 @@ def update_single_resume(resume_id):
 @app.route("/api/resumes/<int:resume_id>", methods=["DELETE"])
 @login_required
 def delete_single_resume(resume_id):
-    delete_resume(resume_id)
+    delete_resume(resume_id, current_user_id())
     return jsonify({"message": "Resume deleted"}), 200
 
 
@@ -313,7 +350,7 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 @app.route("/api/settings/email", methods=["GET"])
 @login_required
 def get_email_status():
-    settings = get_email_settings()
+    settings = get_email_settings(current_user_id())
     if not settings or not settings.get("enabled"):
         return jsonify({"connected": False, "configured": bool(GOOGLE_CLIENT_ID)})
     return jsonify({
@@ -401,7 +438,7 @@ def oauth_callback():
         "client_secret": creds.client_secret,
         "scopes": list(creds.scopes) if creds.scopes else GMAIL_SCOPES,
     }
-    save_email_settings(json.dumps(creds_data), gmail_email)
+    save_email_settings(json.dumps(creds_data), gmail_email, current_user_id())
 
     # Redirect back to the app (Settings page)
     return redirect("/#settings-connected")
@@ -410,7 +447,7 @@ def oauth_callback():
 @app.route("/api/settings/email/disconnect", methods=["POST"])
 @login_required
 def disconnect_email():
-    delete_email_settings()
+    delete_email_settings(current_user_id())
     return jsonify({"message": "Email disconnected"})
 
 
@@ -419,12 +456,13 @@ def disconnect_email():
 def trigger_scan():
     from email_scanner import scan_for_rejections
 
-    creds_json = get_gmail_credentials()
+    uid = current_user_id()
+    creds_json = get_gmail_credentials(uid)
     if not creds_json:
         return jsonify({"error": "Gmail not connected. Go to Settings to connect your email."}), 400
 
-    settings = get_email_settings()
-    jobs = get_active_jobs()
+    settings = get_email_settings(uid)
+    jobs = get_active_jobs(uid)
     if not jobs:
         return jsonify({"emails_checked": 0, "rejections_found": 0, "details": [], "message": "No active jobs to check."}), 200
 
@@ -433,7 +471,7 @@ def trigger_scan():
     if settings and settings.get("last_scanned_at"):
         since_date = settings["last_scanned_at"]
     else:
-        since_date = get_earliest_applied_date()
+        since_date = get_earliest_applied_date(uid)
 
     if not since_date:
         since_date = "2024-01-01"
@@ -447,17 +485,18 @@ def trigger_scan():
             update_job(job_id, {
                 "status": "Rejected",
                 "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
-            })
+            }, uid)
 
         # Save scan log
         add_scan_log(
             result["emails_checked"],
             result["rejections_found"],
             json.dumps(result["details"]),
+            uid,
         )
 
         # Update last scanned timestamp
-        update_last_scanned()
+        update_last_scanned(uid)
 
         return jsonify(result), 200
 
@@ -470,7 +509,7 @@ def trigger_scan():
 @app.route("/api/settings/email/logs", methods=["GET"])
 @login_required
 def list_scan_logs():
-    logs = get_scan_logs()
+    logs = get_scan_logs(current_user_id())
     return jsonify(logs)
 
 
