@@ -649,16 +649,15 @@ renderJobs = function() {
 
 // ── Email Settings & Scan ──
 
+let emailConnected = false;
+
 async function checkEmailConnection() {
     try {
         const res = await fetch("/api/settings/email");
         const data = await res.json();
-        const btn = document.getElementById("scanEmailBtn");
-        if (btn && data.connected) {
-            btn.classList.remove("d-none");
-        }
+        emailConnected = data.connected;
     } catch (e) {
-        // Silently fail — button stays hidden
+        emailConnected = false;
     }
 }
 
@@ -737,6 +736,12 @@ async function disconnectGmail() {
 }
 
 async function triggerEmailScan() {
+    // If email not connected, redirect to Settings
+    if (!emailConnected) {
+        switchSection("settings", document.querySelector('.sidebar-link[data-section="settings"]'));
+        return;
+    }
+
     const scanBtn = document.getElementById("scanEmailBtn");
     const settingsBtn = document.querySelector("#emailConnected .btn-outline-primary");
 
