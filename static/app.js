@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.body.style.removeProperty("padding-right");
 
     loadJobs();
+    loadResumes();
 
     // Stat card filters
     document.querySelectorAll(".stat-card").forEach(card => {
@@ -35,12 +36,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Load resumes when modal opens
-    const resumesModal = document.getElementById("resumesModal");
-    if (resumesModal) {
-        resumesModal.addEventListener("show.bs.modal", () => loadResumes());
-    }
-
     // Sortable headers
     document.querySelectorAll("th[data-sort]").forEach(th => {
         th.style.cursor = "pointer";
@@ -57,6 +52,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 });
+
+// ── Section Navigation ──
+
+function switchSection(section, linkEl) {
+    // Update sidebar active state
+    document.querySelectorAll(".sidebar-link[data-section]").forEach(link => {
+        link.classList.remove("active");
+    });
+    if (linkEl) linkEl.classList.add("active");
+
+    // Show/hide content sections
+    document.querySelectorAll(".content-section").forEach(sec => {
+        sec.classList.remove("active");
+    });
+    const target = document.getElementById("section-" + section);
+    if (target) target.classList.add("active");
+
+    // Load data for the section
+    if (section === "resumes") {
+        loadResumes();
+    }
+}
 
 function updateSortIcons() {
     document.querySelectorAll("th[data-sort]").forEach(th => {
@@ -75,6 +92,9 @@ async function loadJobs() {
     allJobs = await res.json();
     updateStats();
     renderJobs();
+    // Update sidebar badge
+    const badge = document.getElementById("sidebarJobCount");
+    if (badge) badge.textContent = allJobs.length;
 }
 
 function updateStats() {
@@ -89,7 +109,7 @@ function updateStats() {
 
 function formatDate(d) {
     if (!d) return "";
-    // Strip time portion like "2026-01-03 00:00:00" → "2026-01-03"
+    // Strip time portion like "2026-01-03 00:00:00" -> "2026-01-03"
     return d.split(" ")[0];
 }
 
@@ -151,10 +171,10 @@ function renderJobs() {
 
     tbody.innerHTML = filtered.map(job => `
         <tr>
-            <td class="editable-cell" data-id="${job.id}" data-field="applied_date" data-type="date">${formatDate(job.applied_date) || "—"}</td>
-            <td class="editable-cell fw-semibold" data-id="${job.id}" data-field="company">${escapeHtml(job.company) || "—"}</td>
-            <td class="editable-cell" data-id="${job.id}" data-field="role">${escapeHtml(job.role) || "—"}</td>
-            <td class="editable-cell" data-id="${job.id}" data-field="posted_on" data-type="date">${formatDate(job.posted_on) || "—"}</td>
+            <td class="editable-cell" data-id="${job.id}" data-field="applied_date" data-type="date">${formatDate(job.applied_date) || "\u2014"}</td>
+            <td class="editable-cell fw-semibold" data-id="${job.id}" data-field="company">${escapeHtml(job.company) || "\u2014"}</td>
+            <td class="editable-cell" data-id="${job.id}" data-field="role">${escapeHtml(job.role) || "\u2014"}</td>
+            <td class="editable-cell" data-id="${job.id}" data-field="posted_on" data-type="date">${formatDate(job.posted_on) || "\u2014"}</td>
             <td>
                 <select class="form-select form-select-sm status-select ${statusClass(job.status)}"
                         onchange="updateStatus(${job.id}, this.value)">
@@ -173,14 +193,14 @@ function renderJobs() {
                 <select class="form-select form-select-sm visa-select"
                         onchange="updateField(${job.id}, 'visa_answer', this.value)">
                     ${["", "Yes", "No", "Other"]
-                        .map(v => `<option value="${v}" ${v === (job.visa_answer || '') ? "selected" : ""}>${v || "—"}</option>`)
+                        .map(v => `<option value="${v}" ${v === (job.visa_answer || '') ? "selected" : ""}>${v || "\u2014"}</option>`)
                         .join("")}
                 </select>
             </td>
             <td>
                 ${job.link ? `<a href="${escapeHtml(job.link)}" target="_blank" rel="noopener" class="text-decoration-none small">
                     <i class="bi bi-box-arrow-up-right me-1"></i>View
-                </a>` : "—"}
+                </a>` : "\u2014"}
             </td>
             <td class="text-end text-nowrap">
                 <button class="btn btn-sm btn-outline-secondary me-1" onclick="showDetails(${job.id})" title="Details">
@@ -206,7 +226,7 @@ function startEditing(e) {
     const id = cell.dataset.id;
     const field = cell.dataset.field;
     const type = cell.dataset.type || "text";
-    const currentVal = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
+    const currentVal = cell.textContent.trim() === "\u2014" ? "" : cell.textContent.trim();
 
     const input = document.createElement("input");
     input.type = type;
@@ -224,14 +244,14 @@ function startEditing(e) {
         // Update local data so we don't refetch
         const job = allJobs.find(j => j.id == id);
         if (job) job[field] = newVal;
-        cell.textContent = (field === "applied_date" || field === "posted_on") ? (formatDate(newVal) || "—") : (newVal || "—");
+        cell.textContent = (field === "applied_date" || field === "posted_on") ? (formatDate(newVal) || "\u2014") : (newVal || "\u2014");
     };
 
     input.addEventListener("blur", save);
     input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { input.blur(); }
         if (e.key === "Escape") {
-            cell.textContent = currentVal || "—";
+            cell.textContent = currentVal || "\u2014";
         }
     });
 }
@@ -313,17 +333,17 @@ async function showDetails(id) {
     const res = await fetch(`/api/jobs/${id}`);
     const job = await res.json();
 
-    document.getElementById("detailsTitle").textContent = `${job.company} — ${job.role}`;
-    document.getElementById("detailCompany").textContent = job.company || "—";
-    document.getElementById("detailRole").textContent = job.role || "—";
-    document.getElementById("detailAppliedDate").textContent = formatDate(job.applied_date) || "—";
-    document.getElementById("detailPostedOn").textContent = formatDate(job.posted_on) || "—";
+    document.getElementById("detailsTitle").textContent = `${job.company} \u2014 ${job.role}`;
+    document.getElementById("detailCompany").textContent = job.company || "\u2014";
+    document.getElementById("detailRole").textContent = job.role || "\u2014";
+    document.getElementById("detailAppliedDate").textContent = formatDate(job.applied_date) || "\u2014";
+    document.getElementById("detailPostedOn").textContent = formatDate(job.posted_on) || "\u2014";
     document.getElementById("detailStatus").innerHTML = `<span class="badge ${statusBadge(job.status)}">${job.status}</span>`;
-    document.getElementById("detailComment").textContent = job.comment || "—";
-    document.getElementById("detailVisaAnswer").textContent = job.visa_answer || "—";
+    document.getElementById("detailComment").textContent = job.comment || "\u2014";
+    document.getElementById("detailVisaAnswer").textContent = job.visa_answer || "\u2014";
     document.getElementById("detailLink").innerHTML = job.link
         ? `<a href="${escapeHtml(job.link)}" target="_blank" rel="noopener">${escapeHtml(job.link)}</a>`
-        : "—";
+        : "\u2014";
     document.getElementById("detailDescription").textContent = job.job_description || "No description available.";
 
     new bootstrap.Modal(document.getElementById("detailsModal")).show();
@@ -404,53 +424,63 @@ async function loadResumes() {
     try {
         const res = await fetch("/api/resumes");
         allResumes = await res.json();
-        renderResumes();
+        renderResumeCards();
+        // Update sidebar badge
+        const badge = document.getElementById("sidebarResumeCount");
+        if (badge) badge.textContent = allResumes.length;
     } catch (err) {
-        document.getElementById("resumesList").innerHTML =
-            '<div class="alert alert-danger py-2 small">Failed to load resumes.</div>';
+        const grid = document.getElementById("resumeCardsGrid");
+        if (grid) {
+            grid.innerHTML = '<div class="col-12"><div class="alert alert-danger py-2 small">Failed to load resumes.</div></div>';
+        }
     }
 }
 
-function renderResumes() {
-    const container = document.getElementById("resumesList");
+function renderResumeCards() {
+    const grid = document.getElementById("resumeCardsGrid");
+    if (!grid) return;
+
     if (allResumes.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-4 text-muted">
-                <i class="bi bi-file-earmark-pdf" style="font-size: 2rem;"></i>
-                <p class="mt-2 mb-0">No resumes uploaded yet.</p>
+        grid.innerHTML = `
+            <div class="col-12 text-center py-5 text-muted" id="resumeEmptyState">
+                <i class="bi bi-file-earmark-pdf" style="font-size: 3rem;"></i>
+                <p class="mt-3 mb-0 fs-5">No resumes uploaded yet</p>
+                <p class="text-muted small">Upload your first resume to get started</p>
             </div>`;
         return;
     }
-    container.innerHTML = `
-        <table class="table table-hover mb-0 align-middle">
-            <thead class="table-light">
-                <tr>
-                    <th>Filename</th>
-                    <th>Label</th>
-                    <th>Size</th>
-                    <th>Uploaded</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${allResumes.map(r => `
-                    <tr>
-                        <td class="small"><i class="bi bi-file-pdf text-danger me-1"></i>${escapeHtml(r.filename)}</td>
-                        <td class="small">${escapeHtml(r.label) || '<span class="text-muted">\u2014</span>'}</td>
-                        <td class="small text-muted">${formatFileSize(r.file_size)}</td>
-                        <td class="small text-muted">${formatDate(r.uploaded_at)}</td>
-                        <td class="text-end text-nowrap">
-                            <a href="/api/resumes/${r.id}/download" class="btn btn-sm btn-outline-primary me-1" title="Download">
-                                <i class="bi bi-download"></i>
-                            </a>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteResume(${r.id})" title="Delete">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                `).join("")}
-            </tbody>
-        </table>`;
+
+    grid.innerHTML = allResumes.map(r => `
+        <div class="col-sm-6 col-md-4 col-lg-3">
+            <div class="resume-card">
+                <div class="resume-card-body">
+                    <div class="resume-card-icon">
+                        <i class="bi bi-file-earmark-pdf-fill"></i>
+                    </div>
+                    <div class="resume-card-label ${r.label ? '' : 'no-label'}">
+                        ${escapeHtml(r.label) || 'No Label'}
+                    </div>
+                    <div class="resume-card-filename" title="${escapeHtml(r.filename)}">
+                        ${escapeHtml(r.filename)}
+                    </div>
+                    <div class="resume-card-meta">
+                        ${formatFileSize(r.file_size)} &middot; ${formatDate(r.uploaded_at)}
+                    </div>
+                </div>
+                <div class="resume-card-footer">
+                    <a href="/api/resumes/${r.id}/download" class="card-action action-download" title="Download">
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                    <button class="card-action action-edit" onclick="editResumeLabel(${r.id}, '${escapeHtml(r.label || '')}')" title="Edit Label">
+                        <i class="bi bi-pencil"></i> Edit
+                    </button>
+                    <button class="card-action action-delete" onclick="deleteResume(${r.id})" title="Delete">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join("");
 }
 
 function formatFileSize(bytes) {
@@ -488,6 +518,7 @@ async function uploadResume() {
 
         fileInput.value = "";
         labelInput.value = "";
+        bootstrap.Modal.getInstance(document.getElementById("uploadResumeModal")).hide();
         loadResumes();
     } catch (err) {
         errorEl.textContent = err.message;
@@ -495,6 +526,31 @@ async function uploadResume() {
     } finally {
         btn.disabled = false;
         statusEl.classList.add("d-none");
+    }
+}
+
+function editResumeLabel(id, currentLabel) {
+    document.getElementById("editLabelResumeId").value = id;
+    document.getElementById("editLabelInput").value = currentLabel;
+    new bootstrap.Modal(document.getElementById("editResumeLabelModal")).show();
+}
+
+async function saveResumeLabel() {
+    const id = document.getElementById("editLabelResumeId").value;
+    const label = document.getElementById("editLabelInput").value.trim();
+
+    try {
+        const res = await fetch(`/api/resumes/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label }),
+        });
+        if (!res.ok) throw new Error("Failed to update label");
+
+        bootstrap.Modal.getInstance(document.getElementById("editResumeLabelModal")).hide();
+        loadResumes();
+    } catch (err) {
+        alert(err.message);
     }
 }
 
@@ -506,7 +562,7 @@ async function deleteResume(id) {
 
 // ── Column Resizing ──
 function initColumnResize() {
-    const table = document.querySelector("table");
+    const table = document.querySelector("#section-jobs table");
     if (!table) return;
 
     const headerRow = table.querySelector("thead tr");

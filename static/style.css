@@ -1,11 +1,174 @@
+/* ── App Layout ── */
 body {
-    background-color: #f8f9fa;
+    background-color: #f0f2f5;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    overflow: hidden;
+    height: 100vh;
 }
 
+.app-layout {
+    display: flex;
+    height: 100vh;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: #1a1d23;
+    color: #c9d1d9;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 100;
+}
+
+.sidebar-brand {
+    padding: 20px 20px 16px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.sidebar-brand i {
+    font-size: 1.25rem;
+    color: #6ea8fe;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: 12px 12px;
+    overflow-y: auto;
+}
+
+.sidebar-section-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #6c757d;
+    padding: 16px 12px 6px;
+    font-weight: 600;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: #8b949e;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.15s;
+    margin-bottom: 2px;
+}
+
+.sidebar-link:hover {
+    background: rgba(255,255,255,0.06);
+    color: #e6edf3;
+    text-decoration: none;
+}
+
+.sidebar-link.active {
+    background: rgba(56,139,253,0.15);
+    color: #6ea8fe;
+}
+
+.sidebar-link i {
+    font-size: 1.1rem;
+    width: 22px;
+    text-align: center;
+}
+
+.sidebar-badge {
+    margin-left: auto;
+    background: rgba(255,255,255,0.1);
+    color: #8b949e;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.sidebar-link.active .sidebar-badge {
+    background: rgba(56,139,253,0.25);
+    color: #6ea8fe;
+}
+
+.sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ── Main Content ── */
+.main-content {
+    flex: 1;
+    margin-left: 240px;
+    padding: 24px 32px;
+    overflow-y: auto;
+    height: 100vh;
+}
+
+.content-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.content-section {
+    display: none;
+}
+
+.content-section.active {
+    display: block;
+}
+
+/* ── Greeting Banner ── */
+.greeting-banner {
+    background: linear-gradient(135deg, #e8f0fe 0%, #f3e8ff 100%);
+    border: 1px solid #d4dff7;
+    border-radius: 12px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #1a3353;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.greeting-wave {
+    font-size: 1.4rem;
+    animation: wave 2s ease-in-out infinite;
+    display: inline-block;
+    transform-origin: 70% 70%;
+}
+
+@keyframes wave {
+    0%, 100% { transform: rotate(0deg); }
+    10% { transform: rotate(14deg); }
+    20% { transform: rotate(-8deg); }
+    30% { transform: rotate(14deg); }
+    40% { transform: rotate(-4deg); }
+    50% { transform: rotate(10deg); }
+    60% { transform: rotate(0deg); }
+}
+
+/* ── Stat Cards ── */
 .stat-card {
     transition: border-color 0.2s, box-shadow 0.2s;
     border: 2px solid transparent;
+    border-radius: 10px;
 }
 
 .stat-card:hover {
@@ -16,6 +179,7 @@ body {
     border-color: #0d6efd !important;
 }
 
+/* ── Table Styles ── */
 .table th {
     font-size: 0.8rem;
     text-transform: uppercase;
@@ -128,4 +292,124 @@ body {
     font-size: 0.95rem;
     max-height: 400px;
     overflow-y: auto;
+}
+
+/* ── Resume Cards ── */
+.resume-card {
+    border: 1px solid #e1e4e8;
+    border-radius: 12px;
+    background: #fff;
+    transition: all 0.2s ease;
+    overflow: hidden;
+    position: relative;
+}
+
+.resume-card:hover {
+    border-color: #c5ccd3;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.resume-card-body {
+    padding: 24px;
+    text-align: center;
+}
+
+.resume-card-icon {
+    width: 64px;
+    height: 80px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, #fee2e2, #fecaca);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.resume-card-icon i {
+    font-size: 2rem;
+    color: #dc3545;
+}
+
+.resume-card-label {
+    display: inline-block;
+    background: #e8f0fe;
+    color: #1a73e8;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+    margin-bottom: 10px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.resume-card-label.no-label {
+    background: #f1f3f5;
+    color: #868e96;
+}
+
+.resume-card-filename {
+    font-size: 0.85rem;
+    color: #24292f;
+    font-weight: 600;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.resume-card-meta {
+    font-size: 0.75rem;
+    color: #8b949e;
+}
+
+.resume-card-footer {
+    display: flex;
+    border-top: 1px solid #f0f0f0;
+    background: #fafbfc;
+}
+
+.resume-card-footer .card-action {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #57606a;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+    border: none;
+    background: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.resume-card-footer .card-action:hover {
+    background: #f0f2f5;
+    color: #24292f;
+}
+
+.resume-card-footer .card-action.action-download:hover {
+    color: #0d6efd;
+    background: #e8f0fe;
+}
+
+.resume-card-footer .card-action.action-edit:hover {
+    color: #e09f3e;
+    background: #fff8e6;
+}
+
+.resume-card-footer .card-action.action-delete:hover {
+    color: #dc3545;
+    background: #fce4e4;
+}
+
+.resume-card-footer .card-action + .card-action {
+    border-left: 1px solid #f0f0f0;
 }
