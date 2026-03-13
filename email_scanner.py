@@ -1,8 +1,6 @@
 """Gmail email scanner for detecting job rejection emails."""
 
 import json
-import base64
-import time
 from datetime import datetime
 
 from google.oauth2.credentials import Credentials
@@ -45,6 +43,11 @@ REJECTION_KEYWORDS = [
     'subject:"update on your"',
     'subject:"hiring update"',
 ]
+
+# Maximum emails to process per scan to stay within Render's request timeout.
+# Each email requires a Gmail API call + Claude classification time.
+# Budget: ~50 emails = ~15s Gmail fetch (batch) + ~10s Claude = ~25s total.
+MAX_EMAILS_PER_SCAN = 100
 
 
 def _build_gmail_service(credentials_json):
@@ -92,6 +95,49 @@ def _extract_email_info(msg):
             sender = h.get("value", "")
     snippet = msg.get("snippet", "")
     return {"subject": subject, "sender": sender, "snippet": snippet}
+
+
+def _batch_fetch_messages(service, message_refs):
+    """
+    Fetch message details in batches using Gmail batch API.
+    Much faster than fetching one-by-one (100 messages in ~2s vs ~30s).
+    """
+    emails = []
+    BATCH_SIZE = 50  # Gmail batch API limit is 100, use 50 for safety
+
+    for batch_start in range(0, len(message_refs), BATCH_SIZE):
+        batch_refs = message_refs[batch_start:batch_start + BATCH_SIZE]
+        batch_results = {}
+
+        def make_callback(msg_id):
+            def callback(request_id, response, exception):
+                if exception is not None:
+                    print(f"[Email Scan] Batch fetch error for {msg_id}: {exception}")
+                    return
+                batch_results[msg_id] = response
+            return callback
+
+        batch = service.new_batch_http_request()
+        for ref in batch_refs:
+            msg_id = ref["id"]
+            batch.add(
+                service.users().messages().get(
+                    userId="me", id=msg_id, format="metadata",
+                    metadataHeaders=["Subject", "From"]
+                ),
+                callback=make_callback(msg_id),
+            )
+        batch.execute()
+
+        # Collect results in order
+        for ref in batch_refs:
+            msg_id = ref["id"]
+            if msg_id in batch_results:
+                email_info = _extract_email_info(batch_results[msg_id])
+                email_info["msg_id"] = msg_id
+                emails.append(email_info)
+
+    return emails
 
 
 def _classify_with_claude(emails_batch, companies):
@@ -160,15 +206,19 @@ def _paginated_search(service, query, max_results=500):
     messages = []
     page_token = None
     while True:
-        kwargs = {"userId": "me", "q": query, "maxResults": 200}
+        kwargs = {"userId": "me", "q": query, "maxResults": min(200, max_results)}
         if page_token:
             kwargs["pageToken"] = page_token
-        results = service.users().messages().list(**kwargs).execute()
+        try:
+            results = service.users().messages().list(**kwargs).execute()
+        except Exception as e:
+            print(f"[Email Scan] Gmail search error: {e}")
+            break
         messages.extend(results.get("messages", []))
         page_token = results.get("nextPageToken")
         if not page_token or len(messages) >= max_results:
             break
-    return messages
+    return messages[:max_results]
 
 
 def scan_for_rejections(credentials_json, jobs, since_date):
@@ -180,6 +230,7 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     2. Company-specific search (catches ALL emails from companies the user applied to)
 
     Results are combined, deduplicated, and classified by Claude.
+    Uses Gmail batch API for fast message fetching.
     """
     service = _build_gmail_service(credentials_json)
 
@@ -187,9 +238,21 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     epoch = _epoch_from_date(since_date)
     date_filter = f"after:{epoch}" if epoch else ""
 
+    print(f"[Email Scan] Starting scan. since_date={since_date}, epoch={epoch}, date_filter={date_filter}")
+    print(f"[Email Scan] Active jobs: {len(jobs)}")
+
     # ── Strategy 1: Rejection keyword search ──
-    keyword_query = f"{date_filter} ({' OR '.join(REJECTION_KEYWORDS)})".strip()
-    keyword_msgs = _paginated_search(service, keyword_query, max_results=300)
+    # Split keywords into two smaller queries to avoid Gmail query length limits
+    mid = len(REJECTION_KEYWORDS) // 2
+    kw_batch1 = REJECTION_KEYWORDS[:mid]
+    kw_batch2 = REJECTION_KEYWORDS[mid:]
+
+    keyword_msgs = []
+    for kw_batch in [kw_batch1, kw_batch2]:
+        query = f"{date_filter} ({' OR '.join(kw_batch)})".strip()
+        print(f"[Email Scan] Keyword query ({len(query)} chars): {query[:120]}...")
+        msgs = _paginated_search(service, query, max_results=150)
+        keyword_msgs.extend(msgs)
 
     # ── Strategy 2: Company-specific search ──
     # Search for emails from/about each company the user applied to
@@ -202,7 +265,6 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     company_msgs = []
     if companies:
         # Build company query in batches to avoid too-long query strings
-        # Gmail has a ~1500 char query limit, so batch companies
         COMPANY_BATCH = 10
         for i in range(0, len(companies), COMPANY_BATCH):
             batch = companies[i:i + COMPANY_BATCH]
@@ -212,7 +274,7 @@ def scan_for_rejections(credentials_json, jobs, since_date):
                 parts.append(f'from:"{c}"')
                 parts.append(f'subject:"{c}"')
             company_query = f"{date_filter} ({' OR '.join(parts)})".strip()
-            batch_msgs = _paginated_search(service, company_query, max_results=200)
+            batch_msgs = _paginated_search(service, company_query, max_results=100)
             company_msgs.extend(batch_msgs)
 
     # ── Combine & deduplicate ──
@@ -228,25 +290,28 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     if not all_messages:
         return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
-    # Fetch message details
-    emails = []
-    for msg_ref in all_messages:
-        msg = service.users().messages().get(
-            userId="me", id=msg_ref["id"], format="metadata",
-            metadataHeaders=["Subject", "From"]
-        ).execute()
-        email_info = _extract_email_info(msg)
-        email_info["msg_id"] = msg_ref["id"]
-        emails.append(email_info)
+    # Cap to prevent timeout — process most recent emails first
+    if len(all_messages) > MAX_EMAILS_PER_SCAN:
+        print(f"[Email Scan] Capping from {len(all_messages)} to {MAX_EMAILS_PER_SCAN} emails")
+        all_messages = all_messages[:MAX_EMAILS_PER_SCAN]
+
+    # Fetch message details using batch API (much faster than one-by-one)
+    print(f"[Email Scan] Batch-fetching {len(all_messages)} message details...")
+    emails = _batch_fetch_messages(service, all_messages)
+    print(f"[Email Scan] Fetched {len(emails)} email details")
+
+    if not emails:
+        return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
     # Extract company names from jobs for matching
     company_names = [j.get("company", "") for j in jobs]
 
-    # Classify with Claude in batches of 20 to avoid context limits
-    BATCH_SIZE = 20
+    # Classify with Claude in batches of 25
+    BATCH_SIZE = 25
     classifications = []
     for batch_start in range(0, len(emails), BATCH_SIZE):
         batch = emails[batch_start:batch_start + BATCH_SIZE]
+        print(f"[Email Scan] Classifying batch {batch_start // BATCH_SIZE + 1} ({len(batch)} emails)...")
         batch_results = _classify_with_claude(batch, company_names)
         # Adjust indices to be global
         for result in batch_results:
@@ -255,6 +320,7 @@ def scan_for_rejections(credentials_json, jobs, since_date):
 
     # Match rejections to jobs
     details = []
+    matched_job_ids = set()  # Avoid duplicate rejections for same job
     for classification in classifications:
         if not classification.get("is_rejection"):
             continue
@@ -264,7 +330,8 @@ def scan_for_rejections(credentials_json, jobs, since_date):
         email = emails[idx]
         company = classification.get("company", "")
         matched_job = _match_to_job(company, jobs)
-        if matched_job:
+        if matched_job and matched_job["id"] not in matched_job_ids:
+            matched_job_ids.add(matched_job["id"])
             details.append({
                 "job_id": matched_job["id"],
                 "job_company": matched_job.get("company", ""),
@@ -272,6 +339,8 @@ def scan_for_rejections(credentials_json, jobs, since_date):
                 "email_subject": email["subject"],
                 "sender": email["sender"],
             })
+
+    print(f"[Email Scan] Done. Checked {len(emails)}, found {len(details)} rejections.")
 
     return {
         "emails_checked": len(emails),

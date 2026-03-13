@@ -760,7 +760,19 @@ async function triggerEmailScan() {
 
     try {
         const res = await fetch("/api/settings/email/scan", { method: "POST" });
-        const data = await res.json();
+
+        // Handle empty/truncated responses (e.g. from server timeout)
+        const text = await res.text();
+        if (!text || !text.trim()) {
+            throw new Error("Scan timed out. Please try again — the scan will be faster on subsequent runs.");
+        }
+
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (parseErr) {
+            throw new Error("Scan timed out or returned an invalid response. Please try again.");
+        }
 
         if (!res.ok) {
             throw new Error(data.error || "Scan failed");
