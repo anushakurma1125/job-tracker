@@ -47,7 +47,7 @@ REJECTION_KEYWORDS = [
 # Maximum emails to process per scan to stay within Render's request timeout.
 # First scan: no keyword filters, scan ALL emails for maximum accuracy.
 # Incremental scan: keyword + company filters for efficiency.
-MAX_EMAILS_FIRST_SCAN = 500
+MAX_EMAILS_FIRST_SCAN = 1000
 MAX_EMAILS_INCREMENTAL = 100
 
 
