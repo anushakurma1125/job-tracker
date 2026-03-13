@@ -1,8 +1,8 @@
 let allJobs = [];
 let allResumes = [];
 let activeFilter = "";
-let sortCol = "";
-let sortAsc = true;
+let sortCol = "applied_date";
+let sortAsc = false;
 let searchQuery = "";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -121,6 +121,7 @@ async function loadJobs() {
     allJobs = await res.json();
     updateStats();
     renderJobs();
+    updateSortIcons();
     // Update sidebar badge
     const badge = document.getElementById("sidebarJobCount");
     if (badge) badge.textContent = allJobs.length;
@@ -136,10 +137,28 @@ function updateStats() {
     document.getElementById("statRejected").textContent = counts.Rejected;
 }
 
+function getOrdinalSuffix(n) {
+    if (n > 3 && n < 21) return "th";
+    switch (n % 10) {
+        case 1: return "st";
+        case 2: return "nd";
+        case 3: return "rd";
+        default: return "th";
+    }
+}
+
 function formatDate(d) {
     if (!d) return "";
-    // Strip time portion like "2026-01-03 00:00:00" -> "2026-01-03"
-    return d.split(" ")[0];
+    // Parse "2026-03-13" or "2026-03-13 00:00:00" → "13th Mar, 2026"
+    const dateStr = d.toString().split(" ")[0];
+    const parts = dateStr.split("-");
+    if (parts.length !== 3) return dateStr;
+    const day = parseInt(parts[2], 10);
+    const monthIdx = parseInt(parts[1], 10) - 1;
+    const year = parts[0];
+    if (isNaN(day) || isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) return dateStr;
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${day}${getOrdinalSuffix(day)} ${months[monthIdx]}, ${year}`;
 }
 
 function getFilteredSortedJobs() {

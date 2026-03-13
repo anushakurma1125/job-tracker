@@ -45,9 +45,10 @@ REJECTION_KEYWORDS = [
 ]
 
 # Maximum emails to process per scan to stay within Render's request timeout.
-# Each email requires a Gmail API call + Claude classification time.
-# Budget: ~50 emails = ~15s Gmail fetch (batch) + ~10s Claude = ~25s total.
-MAX_EMAILS_PER_SCAN = 100
+# First scan: no keyword filters, scan ALL emails for maximum accuracy.
+# Incremental scan: keyword + company filters for efficiency.
+MAX_EMAILS_FIRST_SCAN = 500
+MAX_EMAILS_INCREMENTAL = 100
 
 
 def _build_gmail_service(credentials_json):
@@ -221,15 +222,20 @@ def _paginated_search(service, query, max_results=500):
     return messages[:max_results]
 
 
-def scan_for_rejections(credentials_json, jobs, since_date):
+def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False):
     """
     Scan Gmail for rejection emails and match them to tracked jobs.
 
-    Uses two search strategies:
-    1. Broad rejection keyword search (catches emails with common rejection phrases)
-    2. Company-specific search (catches ALL emails from companies the user applied to)
+    First scan (is_first_scan=True):
+      - No keyword/company filters — scans ALL emails from since_date
+      - Higher cap (500 emails) for maximum accuracy
+      - Lets Claude classify every email to find rejections
 
-    Results are combined, deduplicated, and classified by Claude.
+    Incremental scan (is_first_scan=False):
+      - Uses keyword + company-specific search strategies for efficiency
+      - Lower cap (100 emails) for speed
+
+    Results are classified by Claude, matched to jobs, and deduplicated.
     Uses Gmail batch API for fast message fetching.
     """
     service = _build_gmail_service(credentials_json)
@@ -238,62 +244,72 @@ def scan_for_rejections(credentials_json, jobs, since_date):
     epoch = _epoch_from_date(since_date)
     date_filter = f"after:{epoch}" if epoch else ""
 
-    print(f"[Email Scan] Starting scan. since_date={since_date}, epoch={epoch}, date_filter={date_filter}")
-    print(f"[Email Scan] Active jobs: {len(jobs)}")
+    max_emails = MAX_EMAILS_FIRST_SCAN if is_first_scan else MAX_EMAILS_INCREMENTAL
 
-    # ── Strategy 1: Rejection keyword search ──
-    # Split keywords into two smaller queries to avoid Gmail query length limits
-    mid = len(REJECTION_KEYWORDS) // 2
-    kw_batch1 = REJECTION_KEYWORDS[:mid]
-    kw_batch2 = REJECTION_KEYWORDS[mid:]
+    print(f"[Email Scan] Starting {'FIRST' if is_first_scan else 'incremental'} scan.")
+    print(f"[Email Scan] since_date={since_date}, epoch={epoch}, date_filter={date_filter}")
+    print(f"[Email Scan] Active jobs: {len(jobs)}, max_emails={max_emails}")
 
-    keyword_msgs = []
-    for kw_batch in [kw_batch1, kw_batch2]:
-        query = f"{date_filter} ({' OR '.join(kw_batch)})".strip()
-        print(f"[Email Scan] Keyword query ({len(query)} chars): {query[:120]}...")
-        msgs = _paginated_search(service, query, max_results=150)
-        keyword_msgs.extend(msgs)
-
-    # ── Strategy 2: Company-specific search ──
-    # Search for emails from/about each company the user applied to
-    companies = list(set(
-        j.get("company", "").strip()
-        for j in jobs
-        if j.get("company", "").strip()
-    ))
-
-    company_msgs = []
-    if companies:
-        # Build company query in batches to avoid too-long query strings
-        COMPANY_BATCH = 10
-        for i in range(0, len(companies), COMPANY_BATCH):
-            batch = companies[i:i + COMPANY_BATCH]
-            parts = []
-            for c in batch:
-                # Search from: and subject: for each company
-                parts.append(f'from:"{c}"')
-                parts.append(f'subject:"{c}"')
-            company_query = f"{date_filter} ({' OR '.join(parts)})".strip()
-            batch_msgs = _paginated_search(service, company_query, max_results=100)
-            company_msgs.extend(batch_msgs)
-
-    # ── Combine & deduplicate ──
-    seen_ids = set()
     all_messages = []
-    for msg in keyword_msgs + company_msgs:
-        if msg["id"] not in seen_ids:
-            seen_ids.add(msg["id"])
-            all_messages.append(msg)
 
-    print(f"[Email Scan] keyword_hits={len(keyword_msgs)}, company_hits={len(company_msgs)}, combined_unique={len(all_messages)}")
+    if is_first_scan:
+        # ── FIRST SCAN: Fetch ALL emails in date range (no filters) ──
+        query = date_filter.strip() if date_filter else ""
+        if not query:
+            query = "after:2024/01/01"
+        print(f"[Email Scan] First scan query: {query}")
+        all_messages = _paginated_search(service, query, max_results=max_emails)
+        print(f"[Email Scan] First scan found {len(all_messages)} emails")
+    else:
+        # ── INCREMENTAL SCAN: Use keyword + company filters ──
+        # Strategy 1: Rejection keyword search
+        mid = len(REJECTION_KEYWORDS) // 2
+        kw_batch1 = REJECTION_KEYWORDS[:mid]
+        kw_batch2 = REJECTION_KEYWORDS[mid:]
+
+        keyword_msgs = []
+        for kw_batch in [kw_batch1, kw_batch2]:
+            query = f"{date_filter} ({' OR '.join(kw_batch)})".strip()
+            print(f"[Email Scan] Keyword query ({len(query)} chars): {query[:120]}...")
+            msgs = _paginated_search(service, query, max_results=150)
+            keyword_msgs.extend(msgs)
+
+        # Strategy 2: Company-specific search
+        companies = list(set(
+            j.get("company", "").strip()
+            for j in jobs
+            if j.get("company", "").strip()
+        ))
+
+        company_msgs = []
+        if companies:
+            COMPANY_BATCH = 10
+            for i in range(0, len(companies), COMPANY_BATCH):
+                batch = companies[i:i + COMPANY_BATCH]
+                parts = []
+                for c in batch:
+                    parts.append(f'from:"{c}"')
+                    parts.append(f'subject:"{c}"')
+                company_query = f"{date_filter} ({' OR '.join(parts)})".strip()
+                batch_msgs = _paginated_search(service, company_query, max_results=100)
+                company_msgs.extend(batch_msgs)
+
+        # Combine & deduplicate
+        seen_ids = set()
+        for msg in keyword_msgs + company_msgs:
+            if msg["id"] not in seen_ids:
+                seen_ids.add(msg["id"])
+                all_messages.append(msg)
+
+        print(f"[Email Scan] keyword_hits={len(keyword_msgs)}, company_hits={len(company_msgs)}, combined_unique={len(all_messages)}")
 
     if not all_messages:
         return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
-    # Cap to prevent timeout — process most recent emails first
-    if len(all_messages) > MAX_EMAILS_PER_SCAN:
-        print(f"[Email Scan] Capping from {len(all_messages)} to {MAX_EMAILS_PER_SCAN} emails")
-        all_messages = all_messages[:MAX_EMAILS_PER_SCAN]
+    # Cap to prevent timeout
+    if len(all_messages) > max_emails:
+        print(f"[Email Scan] Capping from {len(all_messages)} to {max_emails} emails")
+        all_messages = all_messages[:max_emails]
 
     # Fetch message details using batch API (much faster than one-by-one)
     print(f"[Email Scan] Batch-fetching {len(all_messages)} message details...")

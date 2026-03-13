@@ -427,12 +427,12 @@ def get_jobs(user_id, status=None):
     cur = conn.cursor()
     if status:
         cur.execute(
-            f"SELECT * FROM jobs WHERE user_id = {_ph()} AND status = {_ph()} ORDER BY created_at DESC",
+            f"SELECT * FROM jobs WHERE user_id = {_ph()} AND status = {_ph()} ORDER BY applied_date DESC",
             (user_id, status),
         )
     else:
         cur.execute(
-            f"SELECT * FROM jobs WHERE user_id = {_ph()} ORDER BY created_at DESC",
+            f"SELECT * FROM jobs WHERE user_id = {_ph()} ORDER BY applied_date DESC",
             (user_id,),
         )
     jobs = _fetchall(cur, conn)
@@ -504,7 +504,7 @@ def get_active_jobs(user_id):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        f"SELECT * FROM jobs WHERE user_id = {_ph()} AND status NOT IN ('Rejected', 'Withdrawn') ORDER BY created_at DESC",
+        f"SELECT * FROM jobs WHERE user_id = {_ph()} AND status NOT IN ('Rejected', 'Withdrawn') ORDER BY applied_date DESC",
         (user_id,),
     )
     jobs = _fetchall(cur, conn)

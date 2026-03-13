@@ -466,9 +466,10 @@ def trigger_scan():
     if not jobs:
         return jsonify({"emails_checked": 0, "rejections_found": 0, "details": [], "message": "No active jobs to check."}), 200
 
-    # Determine scan start date (delta logic)
+    # Determine scan start date and whether this is the first scan
+    is_first_scan = not (settings and settings.get("last_scanned_at"))
     since_date = None
-    if settings and settings.get("last_scanned_at"):
+    if not is_first_scan:
         since_date = settings["last_scanned_at"]
     else:
         since_date = get_earliest_applied_date(uid)
@@ -477,7 +478,7 @@ def trigger_scan():
         since_date = "2024-01-01"
 
     try:
-        result = scan_for_rejections(creds_json, jobs, since_date)
+        result = scan_for_rejections(creds_json, jobs, since_date, is_first_scan=is_first_scan)
 
         # Update matched jobs to Rejected
         for match in result.get("details", []):
