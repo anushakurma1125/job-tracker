@@ -10,14 +10,41 @@ from googleapiclient.discovery import build
 from anthropic import Anthropic
 
 
-REJECTION_QUERY = (
-    '(subject:"unfortunately" OR subject:"regret to inform" OR subject:"other candidates" '
-    'OR subject:"moved forward with" OR subject:"position has been filled" '
-    'OR subject:"not selected" OR subject:"decided not to proceed" '
-    'OR subject:"will not be moving forward" OR subject:"not be able to offer" '
-    'OR "we will not be moving forward" OR "decided to move forward with other" '
-    'OR "not a match" OR "after careful consideration")'
-)
+# Broad rejection keyword phrases for Gmail search
+REJECTION_KEYWORDS = [
+    # Direct rejection phrases
+    '"unfortunately"',
+    '"regret to inform"',
+    '"other candidates"',
+    '"moved forward with"',
+    '"position has been filled"',
+    '"not selected"',
+    '"decided not to proceed"',
+    '"will not be moving forward"',
+    '"not be able to offer"',
+    '"decided to move forward with other"',
+    '"not a match"',
+    '"after careful consideration"',
+    # Common rejection phrases often missed
+    '"thank you for your interest"',
+    '"we will not be proceeding"',
+    '"no longer under consideration"',
+    '"has been closed"',
+    '"we have decided to pursue"',
+    '"not moving forward"',
+    '"did not select"',
+    '"unable to offer"',
+    '"chosen not to move forward"',
+    '"we went with another"',
+    '"appreciate your interest"',
+    # Application status update subjects
+    'subject:"application update"',
+    'subject:"application status"',
+    'subject:"regarding your application"',
+    'subject:"your application"',
+    'subject:"update on your"',
+    'subject:"hiring update"',
+]
 
 
 def _build_gmail_service(credentials_json):
@@ -96,7 +123,7 @@ Emails:
     try:
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}],
         )
         response_text = message.content[0].text.strip()
@@ -128,45 +155,82 @@ def _match_to_job(company_name, jobs):
     return None
 
 
-def scan_for_rejections(credentials_json, jobs, since_date):
-    """
-    Scan Gmail for rejection emails and match them to tracked jobs.
-
-    Args:
-        credentials_json: JSON string of Gmail OAuth credentials
-        jobs: List of job dicts (with 'company', 'id', etc.)
-        since_date: Date string (YYYY-MM-DD) to scan from
-
-    Returns:
-        dict with keys: emails_checked, rejections_found, details (list)
-    """
-    service = _build_gmail_service(credentials_json)
-
-    # Build query with date filter
-    epoch = _epoch_from_date(since_date)
-    query = REJECTION_QUERY
-    if epoch:
-        query = f"after:{epoch} {query}"
-
-    # Search Gmail with pagination
+def _paginated_search(service, query, max_results=500):
+    """Fetch all message IDs matching a Gmail query, with pagination."""
     messages = []
     page_token = None
     while True:
-        kwargs = {"userId": "me", "q": query, "maxResults": 100}
+        kwargs = {"userId": "me", "q": query, "maxResults": 200}
         if page_token:
             kwargs["pageToken"] = page_token
         results = service.users().messages().list(**kwargs).execute()
         messages.extend(results.get("messages", []))
         page_token = results.get("nextPageToken")
-        if not page_token or len(messages) >= 500:
+        if not page_token or len(messages) >= max_results:
             break
+    return messages
 
-    if not messages:
+
+def scan_for_rejections(credentials_json, jobs, since_date):
+    """
+    Scan Gmail for rejection emails and match them to tracked jobs.
+
+    Uses two search strategies:
+    1. Broad rejection keyword search (catches emails with common rejection phrases)
+    2. Company-specific search (catches ALL emails from companies the user applied to)
+
+    Results are combined, deduplicated, and classified by Claude.
+    """
+    service = _build_gmail_service(credentials_json)
+
+    # Build date filter
+    epoch = _epoch_from_date(since_date)
+    date_filter = f"after:{epoch}" if epoch else ""
+
+    # ── Strategy 1: Rejection keyword search ──
+    keyword_query = f"{date_filter} ({' OR '.join(REJECTION_KEYWORDS)})".strip()
+    keyword_msgs = _paginated_search(service, keyword_query, max_results=300)
+
+    # ── Strategy 2: Company-specific search ──
+    # Search for emails from/about each company the user applied to
+    companies = list(set(
+        j.get("company", "").strip()
+        for j in jobs
+        if j.get("company", "").strip()
+    ))
+
+    company_msgs = []
+    if companies:
+        # Build company query in batches to avoid too-long query strings
+        # Gmail has a ~1500 char query limit, so batch companies
+        COMPANY_BATCH = 10
+        for i in range(0, len(companies), COMPANY_BATCH):
+            batch = companies[i:i + COMPANY_BATCH]
+            parts = []
+            for c in batch:
+                # Search from: and subject: for each company
+                parts.append(f'from:"{c}"')
+                parts.append(f'subject:"{c}"')
+            company_query = f"{date_filter} ({' OR '.join(parts)})".strip()
+            batch_msgs = _paginated_search(service, company_query, max_results=200)
+            company_msgs.extend(batch_msgs)
+
+    # ── Combine & deduplicate ──
+    seen_ids = set()
+    all_messages = []
+    for msg in keyword_msgs + company_msgs:
+        if msg["id"] not in seen_ids:
+            seen_ids.add(msg["id"])
+            all_messages.append(msg)
+
+    print(f"[Email Scan] keyword_hits={len(keyword_msgs)}, company_hits={len(company_msgs)}, combined_unique={len(all_messages)}")
+
+    if not all_messages:
         return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
     # Fetch message details
     emails = []
-    for msg_ref in messages:
+    for msg_ref in all_messages:
         msg = service.users().messages().get(
             userId="me", id=msg_ref["id"], format="metadata",
             metadataHeaders=["Subject", "From"]
@@ -176,14 +240,14 @@ def scan_for_rejections(credentials_json, jobs, since_date):
         emails.append(email_info)
 
     # Extract company names from jobs for matching
-    companies = [j.get("company", "") for j in jobs]
+    company_names = [j.get("company", "") for j in jobs]
 
     # Classify with Claude in batches of 20 to avoid context limits
     BATCH_SIZE = 20
     classifications = []
     for batch_start in range(0, len(emails), BATCH_SIZE):
         batch = emails[batch_start:batch_start + BATCH_SIZE]
-        batch_results = _classify_with_claude(batch, companies)
+        batch_results = _classify_with_claude(batch, company_names)
         # Adjust indices to be global
         for result in batch_results:
             result["index"] = result.get("index", -1) + batch_start
