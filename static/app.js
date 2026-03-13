@@ -830,6 +830,10 @@ function showScanResult(data) {
     const settingsEl = document.getElementById("settingsScanResult");
 
     let html = "";
+    const moreHint = data.has_more
+        ? `<div class="mt-1 small"><i class="bi bi-arrow-repeat me-1"></i><strong>More emails to scan.</strong> Click "Scan Now" again to continue.</div>`
+        : "";
+
     if (data.error) {
         html = `<div class="alert alert-danger alert-dismissible fade show py-2 mb-3" role="alert">
             <i class="bi bi-exclamation-triangle me-1"></i> ${escapeHtml(data.error)}
@@ -843,12 +847,14 @@ function showScanResult(data) {
             <strong><i class="bi bi-envelope-check me-1"></i> Found ${data.rejections_found} rejection${data.rejections_found > 1 ? 's' : ''}</strong>
             <span class="text-muted small ms-1">(${data.emails_checked} emails scanned)</span>
             <ul class="mb-0 mt-1 small">${details}</ul>
+            ${moreHint}
             <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
         </div>`;
     } else {
-        html = `<div class="alert alert-success alert-dismissible fade show py-2 mb-3" role="alert">
-            <i class="bi bi-check-circle me-1"></i> No new rejections found.
+        html = `<div class="alert alert-${data.has_more ? 'info' : 'success'} alert-dismissible fade show py-2 mb-3" role="alert">
+            <i class="bi bi-${data.has_more ? 'info-circle' : 'check-circle'} me-1"></i> No new rejections found.
             <span class="text-muted small">(${data.emails_checked} emails scanned)</span>
+            ${moreHint}
             <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
         </div>`;
     }

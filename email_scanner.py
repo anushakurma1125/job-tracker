@@ -47,7 +47,7 @@ REJECTION_KEYWORDS = [
 # Maximum emails to process per scan to stay within Render's request timeout.
 # First scan: no keyword filters, scan ALL emails for maximum accuracy.
 # Incremental scan: keyword + company filters for efficiency.
-MAX_EMAILS_FIRST_SCAN = 1000
+MAX_EMAILS_FIRST_SCAN = 500
 MAX_EMAILS_INCREMENTAL = 100
 
 
@@ -136,6 +136,8 @@ def _batch_fetch_messages(service, message_refs):
             if msg_id in batch_results:
                 email_info = _extract_email_info(batch_results[msg_id])
                 email_info["msg_id"] = msg_id
+                # Store internalDate (epoch ms) for checkpoint tracking
+                email_info["internal_date"] = int(batch_results[msg_id].get("internalDate", 0))
                 emails.append(email_info)
 
     return emails
@@ -222,14 +224,16 @@ def _paginated_search(service, query, max_results=500):
     return messages[:max_results]
 
 
-def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False):
+def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False, before_epoch=None):
     """
     Scan Gmail for rejection emails and match them to tracked jobs.
 
     First scan (is_first_scan=True):
       - No keyword/company filters — scans ALL emails from since_date
-      - Higher cap (500 emails) for maximum accuracy
-      - Lets Claude classify every email to find rejections
+      - Processes newest→oldest; uses before_epoch as checkpoint so the user
+        can click multiple times to scan through all historical emails in
+        batches of 1000.
+      - Returns oldest_email_epoch so caller can save checkpoint.
 
     Incremental scan (is_first_scan=False):
       - Uses keyword + company-specific search strategies for efficiency
@@ -248,15 +252,19 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False)
 
     print(f"[Email Scan] Starting {'FIRST' if is_first_scan else 'incremental'} scan.")
     print(f"[Email Scan] since_date={since_date}, epoch={epoch}, date_filter={date_filter}")
+    if before_epoch:
+        print(f"[Email Scan] Checkpoint: before:{before_epoch}")
     print(f"[Email Scan] Active jobs: {len(jobs)}, max_emails={max_emails}")
 
     all_messages = []
 
     if is_first_scan:
         # ── FIRST SCAN: Fetch ALL emails in date range (no filters) ──
-        query = date_filter.strip() if date_filter else ""
-        if not query:
-            query = "after:2024/01/01"
+        # Gmail returns newest first. We use before_epoch as a moving
+        # checkpoint so each click scans the next older batch.
+        query = date_filter.strip() if date_filter else "after:2024/01/01"
+        if before_epoch:
+            query = f"{query} before:{before_epoch}"
         print(f"[Email Scan] First scan query: {query}")
         all_messages = _paginated_search(service, query, max_results=max_emails)
         print(f"[Email Scan] First scan found {len(all_messages)} emails")
@@ -304,7 +312,7 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False)
         print(f"[Email Scan] keyword_hits={len(keyword_msgs)}, company_hits={len(company_msgs)}, combined_unique={len(all_messages)}")
 
     if not all_messages:
-        return {"emails_checked": 0, "rejections_found": 0, "details": []}
+        return {"emails_checked": 0, "rejections_found": 0, "details": [], "oldest_email_epoch": None}
 
     # Cap to prevent timeout
     if len(all_messages) > max_emails:
@@ -317,7 +325,17 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False)
     print(f"[Email Scan] Fetched {len(emails)} email details")
 
     if not emails:
-        return {"emails_checked": 0, "rejections_found": 0, "details": []}
+        return {"emails_checked": 0, "rejections_found": 0, "details": [], "oldest_email_epoch": None}
+
+    # Compute oldest email epoch (for checkpoint tracking)
+    # internal_date is in milliseconds; convert to seconds for Gmail query
+    oldest_email_epoch = None
+    if is_first_scan:
+        dates = [e["internal_date"] for e in emails if e.get("internal_date")]
+        if dates:
+            # Gmail internalDate is epoch milliseconds → convert to seconds
+            oldest_email_epoch = min(dates) // 1000
+            print(f"[Email Scan] Oldest email epoch: {oldest_email_epoch}")
 
     # Extract company names from jobs for matching
     company_names = [j.get("company", "") for j in jobs]
@@ -362,4 +380,5 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False)
         "emails_checked": len(emails),
         "rejections_found": len(details),
         "details": details,
+        "oldest_email_epoch": oldest_email_epoch,
     }

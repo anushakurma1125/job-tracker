@@ -144,6 +144,9 @@ def init_db():
         if "user_id" not in email_cols:
             cur.execute("ALTER TABLE email_settings ADD COLUMN user_id INTEGER DEFAULT 1")
             conn.commit()
+        if "scan_checkpoint" not in email_cols:
+            cur.execute("ALTER TABLE email_settings ADD COLUMN scan_checkpoint TEXT DEFAULT NULL")
+            conn.commit()
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scan_log (
@@ -247,6 +250,9 @@ def init_db():
         email_cols = {row[1] for row in cur.fetchall()}
         if "user_id" not in email_cols:
             cur.execute("ALTER TABLE email_settings ADD COLUMN user_id INTEGER DEFAULT 1")
+            conn.commit()
+        if "scan_checkpoint" not in email_cols:
+            cur.execute("ALTER TABLE email_settings ADD COLUMN scan_checkpoint TEXT DEFAULT NULL")
             conn.commit()
 
         cur.execute("""
@@ -603,7 +609,7 @@ def get_email_settings(user_id):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        f"SELECT id, gmail_email, enabled, last_scanned_at, created_at FROM email_settings WHERE user_id = {_ph()} LIMIT 1",
+        f"SELECT id, gmail_email, enabled, last_scanned_at, scan_checkpoint, created_at FROM email_settings WHERE user_id = {_ph()} LIMIT 1",
         (user_id,),
     )
     row = _fetchone(cur, conn)
@@ -657,6 +663,32 @@ def update_last_scanned(user_id):
     cur.execute(
         f"UPDATE email_settings SET last_scanned_at = {_ph()} WHERE user_id = {_ph()}",
         (now, user_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def save_scan_checkpoint(checkpoint_epoch, user_id):
+    """Save the epoch of the oldest processed email so next scan continues from there."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE email_settings SET scan_checkpoint = {_ph()} WHERE user_id = {_ph()}",
+        (str(checkpoint_epoch), user_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def clear_scan_checkpoint(user_id):
+    """Clear checkpoint after first scan is fully complete."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE email_settings SET scan_checkpoint = NULL WHERE user_id = {_ph()}",
+        (user_id,),
     )
     conn.commit()
     cur.close()

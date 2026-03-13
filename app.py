@@ -12,6 +12,7 @@ from database import (init_db, add_job, get_jobs, get_job, update_job, delete_jo
                        update_last_scanned, delete_email_settings,
                        get_earliest_applied_date, get_active_jobs,
                        add_scan_log, get_scan_logs,
+                       save_scan_checkpoint, clear_scan_checkpoint,
                        create_user, get_user_by_username)
 from extractor import extract_job_details
 
@@ -454,7 +455,7 @@ def disconnect_email():
 @app.route("/api/settings/email/scan", methods=["POST"])
 @login_required
 def trigger_scan():
-    from email_scanner import scan_for_rejections
+    from email_scanner import scan_for_rejections, MAX_EMAILS_FIRST_SCAN
 
     uid = current_user_id()
     creds_json = get_gmail_credentials(uid)
@@ -477,8 +478,20 @@ def trigger_scan():
     if not since_date:
         since_date = "2024-01-01"
 
+    # Read checkpoint for first scan (allows multi-click scanning)
+    before_epoch = None
+    if is_first_scan and settings and settings.get("scan_checkpoint"):
+        try:
+            before_epoch = int(settings["scan_checkpoint"])
+        except (ValueError, TypeError):
+            before_epoch = None
+
     try:
-        result = scan_for_rejections(creds_json, jobs, since_date, is_first_scan=is_first_scan)
+        result = scan_for_rejections(
+            creds_json, jobs, since_date,
+            is_first_scan=is_first_scan,
+            before_epoch=before_epoch,
+        )
 
         # Update matched jobs to Rejected
         for match in result.get("details", []):
@@ -496,9 +509,22 @@ def trigger_scan():
             uid,
         )
 
-        # Update last scanned timestamp
-        update_last_scanned(uid)
+        # Checkpoint logic for first scan
+        has_more = False
+        if is_first_scan:
+            if result["emails_checked"] >= MAX_EMAILS_FIRST_SCAN and result.get("oldest_email_epoch"):
+                # More emails to scan — save checkpoint for next click
+                save_scan_checkpoint(result["oldest_email_epoch"], uid)
+                has_more = True
+            else:
+                # First scan complete — mark as done
+                clear_scan_checkpoint(uid)
+                update_last_scanned(uid)
+        else:
+            # Incremental scan — always update last scanned
+            update_last_scanned(uid)
 
+        result["has_more"] = has_more
         return jsonify(result), 200
 
     except Exception as e:
