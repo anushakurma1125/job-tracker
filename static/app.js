@@ -4,6 +4,8 @@ let activeFilter = "";
 let sortCol = "applied_date";
 let sortAsc = false;
 let searchQuery = "";
+let dateFrom = "";
+let dateTo = "";
 
 document.addEventListener("DOMContentLoaded", () => {
     // Clean up any stale modal backdrops
@@ -41,6 +43,24 @@ document.addEventListener("DOMContentLoaded", () => {
     if (searchInput) {
         searchInput.addEventListener("input", (e) => {
             searchQuery = e.target.value.toLowerCase();
+            renderJobs();
+        });
+    }
+
+    // Date range filter
+    const dateFromInput = document.getElementById("dateFrom");
+    const dateToInput = document.getElementById("dateTo");
+    if (dateFromInput) {
+        dateFromInput.addEventListener("change", (e) => {
+            dateFrom = e.target.value;
+            toggleClearDateBtn();
+            renderJobs();
+        });
+    }
+    if (dateToInput) {
+        dateToInput.addEventListener("change", (e) => {
+            dateTo = e.target.value;
+            toggleClearDateBtn();
             renderJobs();
         });
     }
@@ -173,6 +193,35 @@ function formatDate(d) {
     return `${day}${getOrdinalSuffix(day)} ${months[monthIdx]}, ${year}`;
 }
 
+function clearDateFilter() {
+    dateFrom = "";
+    dateTo = "";
+    const fromEl = document.getElementById("dateFrom");
+    const toEl = document.getElementById("dateTo");
+    if (fromEl) fromEl.value = "";
+    if (toEl) toEl.value = "";
+    toggleClearDateBtn();
+    renderJobs();
+}
+
+function toggleClearDateBtn() {
+    const btn = document.getElementById("clearDateFilter");
+    if (btn) {
+        btn.style.display = (dateFrom || dateTo) ? "inline-block" : "none";
+    }
+}
+
+function normalizeDate(d) {
+    // Convert "DD-MM-YYYY" or "YYYY-MM-DD" to "YYYY-MM-DD" for comparison
+    if (!d) return "";
+    const s = d.toString().split(" ")[0];
+    const parts = s.split(/[-\/]/);
+    if (parts.length !== 3) return s;
+    if (parts[0].length === 4) return s; // Already YYYY-MM-DD
+    // DD-MM-YYYY → YYYY-MM-DD
+    return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+}
+
 function getFilteredSortedJobs() {
     let jobs = allJobs;
 
@@ -189,6 +238,17 @@ function getFilteredSortedJobs() {
                 j.status, j.comment, j.visa_answer, j.link
             ].filter(Boolean).join(" ").toLowerCase();
             return text.includes(searchQuery);
+        });
+    }
+
+    // Date range filter (applied_date)
+    if (dateFrom || dateTo) {
+        jobs = jobs.filter(j => {
+            const jobDate = normalizeDate(j.applied_date);
+            if (!jobDate) return false;
+            if (dateFrom && jobDate < dateFrom) return false;
+            if (dateTo && jobDate > dateTo) return false;
+            return true;
         });
     }
 
