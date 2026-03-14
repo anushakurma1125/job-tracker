@@ -44,10 +44,9 @@ REJECTION_KEYWORDS = [
     'subject:"hiring update"',
 ]
 
-# Maximum emails to process per scan to stay within Render's request timeout.
 # First scan: no keyword filters, scan ALL emails for maximum accuracy.
-# Incremental scan: keyword + company filters for efficiency.
-MAX_EMAILS_FIRST_SCAN = 300
+# Runs in background thread so no HTTP timeout constraint.
+MAX_EMAILS_FIRST_SCAN = 5000
 MAX_EMAILS_INCREMENTAL = 100
 
 
@@ -224,16 +223,13 @@ def _paginated_search(service, query, max_results=500):
     return messages[:max_results]
 
 
-def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False, before_epoch=None):
+def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False, before_epoch=None, progress_callback=None):
     """
     Scan Gmail for rejection emails and match them to tracked jobs.
 
     First scan (is_first_scan=True):
       - No keyword/company filters — scans ALL emails from since_date
-      - Processes newest→oldest; uses before_epoch as checkpoint so the user
-        can click multiple times to scan through all historical emails in
-        batches of 1000.
-      - Returns oldest_email_epoch so caller can save checkpoint.
+      - Runs in a background thread so there is no HTTP timeout constraint.
 
     Incremental scan (is_first_scan=False):
       - Uses keyword + company-specific search strategies for efficiency
@@ -242,6 +238,11 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False,
     Results are classified by Claude, matched to jobs, and deduplicated.
     Uses Gmail batch API for fast message fetching.
     """
+    def _progress(msg):
+        print(f"[Email Scan] {msg}")
+        if progress_callback:
+            progress_callback(msg)
+
     service = _build_gmail_service(credentials_json)
 
     # Build date filter
@@ -250,24 +251,18 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False,
 
     max_emails = MAX_EMAILS_FIRST_SCAN if is_first_scan else MAX_EMAILS_INCREMENTAL
 
-    print(f"[Email Scan] Starting {'FIRST' if is_first_scan else 'incremental'} scan.")
+    _progress(f"Starting {'FIRST' if is_first_scan else 'incremental'} scan...")
     print(f"[Email Scan] since_date={since_date}, epoch={epoch}, date_filter={date_filter}")
-    if before_epoch:
-        print(f"[Email Scan] Checkpoint: before:{before_epoch}")
     print(f"[Email Scan] Active jobs: {len(jobs)}, max_emails={max_emails}")
 
     all_messages = []
 
     if is_first_scan:
         # ── FIRST SCAN: Fetch ALL emails in date range (no filters) ──
-        # Gmail returns newest first. We use before_epoch as a moving
-        # checkpoint so each click scans the next older batch.
         query = date_filter.strip() if date_filter else "after:2024/01/01"
-        if before_epoch:
-            query = f"{query} before:{before_epoch}"
-        print(f"[Email Scan] First scan query: {query}")
+        _progress("Searching Gmail for all emails in date range...")
         all_messages = _paginated_search(service, query, max_results=max_emails)
-        print(f"[Email Scan] First scan found {len(all_messages)} emails")
+        _progress(f"Found {len(all_messages)} emails to process")
     else:
         # ── INCREMENTAL SCAN: Use keyword + company filters ──
         # Strategy 1: Rejection keyword search
@@ -312,40 +307,31 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False,
         print(f"[Email Scan] keyword_hits={len(keyword_msgs)}, company_hits={len(company_msgs)}, combined_unique={len(all_messages)}")
 
     if not all_messages:
-        return {"emails_checked": 0, "rejections_found": 0, "details": [], "oldest_email_epoch": None}
+        return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
-    # Cap to prevent timeout
+    # Cap to safety limit
     if len(all_messages) > max_emails:
-        print(f"[Email Scan] Capping from {len(all_messages)} to {max_emails} emails")
+        _progress(f"Capping from {len(all_messages)} to {max_emails} emails")
         all_messages = all_messages[:max_emails]
 
     # Fetch message details using batch API (much faster than one-by-one)
-    print(f"[Email Scan] Batch-fetching {len(all_messages)} message details...")
+    _progress(f"Fetching details for {len(all_messages)} emails...")
     emails = _batch_fetch_messages(service, all_messages)
-    print(f"[Email Scan] Fetched {len(emails)} email details")
 
     if not emails:
-        return {"emails_checked": 0, "rejections_found": 0, "details": [], "oldest_email_epoch": None}
-
-    # Compute oldest email epoch (for checkpoint tracking)
-    # internal_date is in milliseconds; convert to seconds for Gmail query
-    oldest_email_epoch = None
-    if is_first_scan:
-        dates = [e["internal_date"] for e in emails if e.get("internal_date")]
-        if dates:
-            # Gmail internalDate is epoch milliseconds → convert to seconds
-            oldest_email_epoch = min(dates) // 1000
-            print(f"[Email Scan] Oldest email epoch: {oldest_email_epoch}")
+        return {"emails_checked": 0, "rejections_found": 0, "details": []}
 
     # Extract company names from jobs for matching
     company_names = [j.get("company", "") for j in jobs]
 
     # Classify with Claude in batches of 25
     BATCH_SIZE = 25
+    total_batches = (len(emails) + BATCH_SIZE - 1) // BATCH_SIZE
     classifications = []
     for batch_start in range(0, len(emails), BATCH_SIZE):
         batch = emails[batch_start:batch_start + BATCH_SIZE]
-        print(f"[Email Scan] Classifying batch {batch_start // BATCH_SIZE + 1} ({len(batch)} emails)...")
+        batch_num = batch_start // BATCH_SIZE + 1
+        _progress(f"Classifying emails with AI... ({min(batch_start + BATCH_SIZE, len(emails))}/{len(emails)})")
         batch_results = _classify_with_claude(batch, company_names)
         # Adjust indices to be global
         for result in batch_results:
@@ -374,11 +360,10 @@ def scan_for_rejections(credentials_json, jobs, since_date, is_first_scan=False,
                 "sender": email["sender"],
             })
 
-    print(f"[Email Scan] Done. Checked {len(emails)}, found {len(details)} rejections.")
+    _progress(f"Done! Checked {len(emails)} emails, found {len(details)} rejections.")
 
     return {
         "emails_checked": len(emails),
         "rejections_found": len(details),
         "details": details,
-        "oldest_email_epoch": oldest_email_epoch,
     }

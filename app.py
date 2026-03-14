@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import threading
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -21,6 +22,55 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 # Always initialize the database (works with both direct run and Gunicorn)
 init_db()
+
+# ── Background scan state (per-user, in-memory) ──
+_scan_state = {}   # {user_id: {"status": "scanning"|"done"|"error", "progress": str, "result": dict}}
+_scan_lock = threading.Lock()
+
+
+def _background_scan(uid, creds_json, jobs, since_date, is_first_scan):
+    """Run email scan in a background thread (no HTTP timeout constraint)."""
+    try:
+        from email_scanner import scan_for_rejections
+
+        def on_progress(msg):
+            with _scan_lock:
+                if uid in _scan_state:
+                    _scan_state[uid]["progress"] = msg
+
+        result = scan_for_rejections(
+            creds_json, jobs, since_date,
+            is_first_scan=is_first_scan,
+            progress_callback=on_progress,
+        )
+
+        # Update matched jobs to Rejected
+        for match in result.get("details", []):
+            update_job(match["job_id"], {
+                "status": "Rejected",
+                "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
+            }, uid)
+
+        # Save scan log
+        add_scan_log(
+            result["emails_checked"],
+            result["rejections_found"],
+            json.dumps(result["details"]),
+            uid,
+        )
+
+        # Mark scan complete
+        update_last_scanned(uid)
+        clear_scan_checkpoint(uid)
+
+        with _scan_lock:
+            _scan_state[uid] = {"status": "done", "result": result}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        with _scan_lock:
+            _scan_state[uid] = {"status": "error", "result": {"error": f"Scan failed: {str(e)}"}}
 
 
 @app.errorhandler(Exception)
@@ -455,9 +505,16 @@ def disconnect_email():
 @app.route("/api/settings/email/scan", methods=["POST"])
 @login_required
 def trigger_scan():
-    from email_scanner import scan_for_rejections, MAX_EMAILS_FIRST_SCAN
-
     uid = current_user_id()
+
+    # If a scan is already running, just return the current state
+    with _scan_lock:
+        if uid in _scan_state and _scan_state[uid].get("status") == "scanning":
+            return jsonify({
+                "status": "scanning",
+                "progress": _scan_state[uid].get("progress", "Scanning..."),
+            }), 200
+
     creds_json = get_gmail_credentials(uid)
     if not creds_json:
         return jsonify({"error": "Gmail not connected. Go to Settings to connect your email."}), 400
@@ -465,11 +522,13 @@ def trigger_scan():
     settings = get_email_settings(uid)
     jobs = get_active_jobs(uid)
     if not jobs:
-        return jsonify({"emails_checked": 0, "rejections_found": 0, "details": [], "message": "No active jobs to check."}), 200
+        return jsonify({
+            "status": "done",
+            "result": {"emails_checked": 0, "rejections_found": 0, "details": [], "message": "No active jobs to check."},
+        }), 200
 
     # Determine scan start date and whether this is the first scan
     is_first_scan = not (settings and settings.get("last_scanned_at"))
-    since_date = None
     if not is_first_scan:
         since_date = settings["last_scanned_at"]
     else:
@@ -478,59 +537,31 @@ def trigger_scan():
     if not since_date:
         since_date = "2024-01-01"
 
-    # Read checkpoint for first scan (allows multi-click scanning)
-    before_epoch = None
-    if is_first_scan and settings and settings.get("scan_checkpoint"):
-        try:
-            before_epoch = int(settings["scan_checkpoint"])
-        except (ValueError, TypeError):
-            before_epoch = None
+    # Start scan in background thread — returns immediately
+    with _scan_lock:
+        _scan_state[uid] = {"status": "scanning", "progress": "Starting scan..."}
 
-    try:
-        result = scan_for_rejections(
-            creds_json, jobs, since_date,
-            is_first_scan=is_first_scan,
-            before_epoch=before_epoch,
-        )
+    thread = threading.Thread(
+        target=_background_scan,
+        args=(uid, creds_json, jobs, since_date, is_first_scan),
+        daemon=True,
+    )
+    thread.start()
 
-        # Update matched jobs to Rejected
-        for match in result.get("details", []):
-            job_id = match["job_id"]
-            update_job(job_id, {
-                "status": "Rejected",
-                "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
-            }, uid)
+    return jsonify({"status": "scanning", "progress": "Starting scan..."}), 200
 
-        # Save scan log
-        add_scan_log(
-            result["emails_checked"],
-            result["rejections_found"],
-            json.dumps(result["details"]),
-            uid,
-        )
 
-        # Checkpoint logic for first scan
-        has_more = False
-        if is_first_scan:
-            if result["emails_checked"] >= MAX_EMAILS_FIRST_SCAN and result.get("oldest_email_epoch"):
-                # More emails to scan — save checkpoint for next click
-                save_scan_checkpoint(result["oldest_email_epoch"], uid)
-                has_more = True
-            else:
-                # First scan complete — mark as done
-                clear_scan_checkpoint(uid)
-                update_last_scanned(uid)
-        else:
-            # Incremental scan — always update last scanned
-            update_last_scanned(uid)
+@app.route("/api/settings/email/scan/status", methods=["GET"])
+@login_required
+def scan_status():
+    uid = current_user_id()
+    with _scan_lock:
+        state = _scan_state.get(uid)
 
-        result["has_more"] = has_more
-        return jsonify(result), 200
+    if not state:
+        return jsonify({"status": "idle"}), 200
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Scan failed: {str(e)}"}), 500
+    return jsonify(state), 200
 
 
 @app.route("/api/settings/email/logs", methods=["GET"])

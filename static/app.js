@@ -766,6 +766,10 @@ async function disconnectGmail() {
     }
 }
 
+let origScanBtnHtml = "";
+let origSettingsBtnHtml = "";
+let scanPollInterval = null;
+
 async function triggerEmailScan() {
     // If email not connected, redirect to Settings
     if (!emailConnected) {
@@ -773,65 +777,121 @@ async function triggerEmailScan() {
         return;
     }
 
-    const scanBtn = document.getElementById("scanEmailBtn");
-    const settingsBtn = document.querySelector("#emailConnected .btn-outline-primary");
-
-    // Show loading state on both buttons
-    const origBtnHtml = scanBtn ? scanBtn.innerHTML : "";
-    const origSettingsHtml = settingsBtn ? settingsBtn.innerHTML : "";
-
-    if (scanBtn) {
-        scanBtn.disabled = true;
-        scanBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
-    }
-    if (settingsBtn) {
-        settingsBtn.disabled = true;
-        settingsBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
-    }
+    setScanButtonsLoading(true);
 
     try {
         const res = await fetch("/api/settings/email/scan", { method: "POST" });
+        const data = await res.json();
 
-        // Handle empty/truncated responses (e.g. from server timeout)
-        const text = await res.text();
-        if (!text || !text.trim()) {
-            throw new Error("Scan timed out. Please try again — the scan will be faster on subsequent runs.");
+        if (data.error) {
+            showScanResult(data);
+            setScanButtonsLoading(false);
+            return;
         }
 
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch (parseErr) {
-            throw new Error("Scan timed out or returned an invalid response. Please try again.");
+        if (data.status === "scanning") {
+            // Scan started in background — show progress and start polling
+            showScanProgress(data.progress || "Starting scan...");
+            startScanPolling();
+            return;
         }
 
-        if (!res.ok) {
-            throw new Error(data.error || "Scan failed");
+        if (data.status === "done") {
+            // Immediate result (e.g. no jobs)
+            showScanResult(data.result || data);
+            if (data.result && data.result.rejections_found > 0) loadJobs();
+            loadSettings();
+            loadScanLogs();
+            setScanButtonsLoading(false);
         }
-
-        // Show result toast
-        showScanResult(data);
-
-        // Reload jobs if any rejections were found
-        if (data.rejections_found > 0) {
-            loadJobs();
-        }
-
-        // Reload settings to update last scanned time
-        loadSettings();
-        loadScanLogs();
 
     } catch (e) {
-        showScanResult({ error: e.message });
-    } finally {
+        showScanResult({ error: "Failed to start scan. Please try again." });
+        setScanButtonsLoading(false);
+    }
+}
+
+function setScanButtonsLoading(loading) {
+    const scanBtn = document.getElementById("scanEmailBtn");
+    const settingsBtn = document.querySelector("#emailConnected .btn-outline-primary");
+
+    if (loading) {
+        origScanBtnHtml = scanBtn ? scanBtn.innerHTML : "";
+        origSettingsBtnHtml = settingsBtn ? settingsBtn.innerHTML : "";
+        if (scanBtn) {
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
+        }
+        if (settingsBtn) {
+            settingsBtn.disabled = true;
+            settingsBtn.innerHTML = '<span class="scan-spinner me-1"></span> Scanning...';
+        }
+    } else {
         if (scanBtn) {
             scanBtn.disabled = false;
-            scanBtn.innerHTML = origBtnHtml;
+            scanBtn.innerHTML = origScanBtnHtml || '<i class="bi bi-envelope-check me-1"></i> Scan Now';
         }
         if (settingsBtn) {
             settingsBtn.disabled = false;
-            settingsBtn.innerHTML = origSettingsHtml;
+            settingsBtn.innerHTML = origSettingsBtnHtml || '<i class="bi bi-envelope-check me-1"></i> Scan Now';
         }
+    }
+}
+
+function startScanPolling() {
+    if (scanPollInterval) clearInterval(scanPollInterval);
+
+    scanPollInterval = setInterval(async () => {
+        try {
+            const res = await fetch("/api/settings/email/scan/status");
+            const data = await res.json();
+
+            if (data.status === "scanning") {
+                showScanProgress(data.progress || "Scanning...");
+            } else if (data.status === "done") {
+                clearInterval(scanPollInterval);
+                scanPollInterval = null;
+                showScanResult(data.result);
+                if (data.result && data.result.rejections_found > 0) loadJobs();
+                loadSettings();
+                loadScanLogs();
+                setScanButtonsLoading(false);
+            } else if (data.status === "error") {
+                clearInterval(scanPollInterval);
+                scanPollInterval = null;
+                showScanResult(data.result || { error: "Scan failed" });
+                setScanButtonsLoading(false);
+            } else {
+                // idle or unknown — stop polling
+                clearInterval(scanPollInterval);
+                scanPollInterval = null;
+                setScanButtonsLoading(false);
+            }
+        } catch (e) {
+            clearInterval(scanPollInterval);
+            scanPollInterval = null;
+            showScanResult({ error: "Lost connection to server. Please refresh and try again." });
+            setScanButtonsLoading(false);
+        }
+    }, 3000); // poll every 3 seconds
+}
+
+function showScanProgress(message) {
+    const alertEl = document.getElementById("scanResultAlert");
+    const settingsEl = document.getElementById("settingsScanResult");
+
+    const html = `<div class="alert alert-info py-2 mb-3" role="alert">
+        <span class="scan-spinner me-2"></span> ${escapeHtml(message)}
+        <div class="text-muted small mt-1">This may take a few minutes for the first scan. You can navigate around while it runs.</div>
+    </div>`;
+
+    if (alertEl) {
+        alertEl.innerHTML = html;
+        alertEl.classList.remove("d-none");
+    }
+    if (settingsEl) {
+        settingsEl.innerHTML = html;
+        settingsEl.classList.remove("d-none");
     }
 }
 
@@ -842,9 +902,6 @@ function showScanResult(data) {
     const settingsEl = document.getElementById("settingsScanResult");
 
     let html = "";
-    const moreHint = data.has_more
-        ? `<div class="mt-1 small"><i class="bi bi-arrow-repeat me-1"></i><strong>More emails to scan.</strong> Click "Scan Now" again to continue.</div>`
-        : "";
 
     if (data.error) {
         html = `<div class="alert alert-danger alert-dismissible fade show py-2 mb-3" role="alert">
@@ -859,14 +916,12 @@ function showScanResult(data) {
             <strong><i class="bi bi-envelope-check me-1"></i> Found ${data.rejections_found} rejection${data.rejections_found > 1 ? 's' : ''}</strong>
             <span class="text-muted small ms-1">(${data.emails_checked} emails scanned)</span>
             <ul class="mb-0 mt-1 small">${details}</ul>
-            ${moreHint}
             <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
         </div>`;
     } else {
-        html = `<div class="alert alert-${data.has_more ? 'info' : 'success'} alert-dismissible fade show py-2 mb-3" role="alert">
-            <i class="bi bi-${data.has_more ? 'info-circle' : 'check-circle'} me-1"></i> No new rejections found.
+        html = `<div class="alert alert-success alert-dismissible fade show py-2 mb-3" role="alert">
+            <i class="bi bi-check-circle me-1"></i> No new rejections found.
             <span class="text-muted small">(${data.emails_checked} emails scanned)</span>
-            ${moreHint}
             <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
         </div>`;
     }
