@@ -149,13 +149,25 @@ function getOrdinalSuffix(n) {
 
 function formatDate(d) {
     if (!d) return "";
-    // Parse "2026-03-13" or "2026-03-13 00:00:00" → "13th Mar, 2026"
+    // Parse dates in either "YYYY-MM-DD" or "DD-MM-YYYY" format → "13th Mar, 2026"
     const dateStr = d.toString().split(" ")[0];
-    const parts = dateStr.split("-");
+    // Support both "/" and "-" separators
+    const parts = dateStr.split(/[-\/]/);
     if (parts.length !== 3) return dateStr;
-    const day = parseInt(parts[2], 10);
-    const monthIdx = parseInt(parts[1], 10) - 1;
-    const year = parts[0];
+
+    let day, monthIdx, year;
+    if (parts[0].length === 4) {
+        // YYYY-MM-DD format
+        year = parts[0];
+        monthIdx = parseInt(parts[1], 10) - 1;
+        day = parseInt(parts[2], 10);
+    } else {
+        // DD-MM-YYYY format
+        day = parseInt(parts[0], 10);
+        monthIdx = parseInt(parts[1], 10) - 1;
+        year = parts[2];
+    }
+
     if (isNaN(day) || isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) return dateStr;
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     return `${day}${getOrdinalSuffix(day)} ${months[monthIdx]}, ${year}`;
