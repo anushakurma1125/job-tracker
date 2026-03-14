@@ -147,10 +147,12 @@ async function loadJobs() {
     if (badge) badge.textContent = allJobs.length;
 }
 
-function updateStats() {
-    document.getElementById("statTotal").textContent = allJobs.length;
+function updateStats(jobs) {
+    // If no jobs passed, use allJobs (initial load)
+    const dataset = jobs || allJobs;
+    document.getElementById("statTotal").textContent = dataset.length;
     const counts = { Applied: 0, Interviewing: 0, Offer: 0, Rejected: 0 };
-    allJobs.forEach(j => { if (counts[j.status] !== undefined) counts[j.status]++; });
+    dataset.forEach(j => { if (counts[j.status] !== undefined) counts[j.status]++; });
     document.getElementById("statApplied").textContent = counts.Applied;
     document.getElementById("statInterviewing").textContent = counts.Interviewing;
     document.getElementById("statOffer").textContent = counts.Offer;
@@ -222,13 +224,10 @@ function normalizeDate(d) {
     return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
 }
 
-function getFilteredSortedJobs() {
+function getBaseFilteredJobs() {
+    // Apply search + date filters (but NOT status filter).
+    // Used for dynamic stat card counts.
     let jobs = allJobs;
-
-    // Status filter (stat cards)
-    if (activeFilter) {
-        jobs = jobs.filter(j => j.status === activeFilter);
-    }
 
     // Search filter
     if (searchQuery) {
@@ -252,6 +251,18 @@ function getFilteredSortedJobs() {
         });
     }
 
+    return jobs;
+}
+
+function getFilteredSortedJobs() {
+    // Start from base-filtered jobs (search + date), then add status + sort
+    let jobs = getBaseFilteredJobs();
+
+    // Status filter (stat cards)
+    if (activeFilter) {
+        jobs = jobs.filter(j => j.status === activeFilter);
+    }
+
     // Sort
     if (sortCol) {
         jobs = [...jobs].sort((a, b) => {
@@ -268,12 +279,18 @@ function getFilteredSortedJobs() {
 
 function renderJobs() {
     const tbody = document.getElementById("jobsTableBody");
+
+    // Recompute stats from base-filtered jobs (search + date, no status)
+    const baseJobs = getBaseFilteredJobs();
+    updateStats(baseJobs);
+
     const filtered = getFilteredSortedJobs();
 
     // Update count badge
     const countEl = document.getElementById("filteredCount");
+    const hasFilters = searchQuery || activeFilter || dateFrom || dateTo;
     if (countEl) {
-        countEl.textContent = (searchQuery || activeFilter)
+        countEl.textContent = hasFilters
             ? `Showing ${filtered.length} of ${allJobs.length}`
             : `${allJobs.length} jobs`;
     }
