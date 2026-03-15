@@ -564,6 +564,100 @@ def scan_status():
     return jsonify(state), 200
 
 
+# ── ATS Analyzer Routes ──
+
+@app.route("/api/ats/analyze", methods=["POST"])
+@login_required
+def ats_analyze():
+    import anthropic
+
+    data = request.get_json()
+    jd = (data.get("jd") or "").strip()
+    resume_text = (data.get("resume") or "").strip()
+    role = (data.get("role") or "Not specified").strip()
+    history = data.get("history") or []
+
+    if not jd or not resume_text:
+        return jsonify({"error": "Both job description and resume are required."}), 400
+
+    # Build history context
+    ctx = ""
+    if history:
+        recent = history[-3:]
+        ctx = f"Prior analyses ({len(history)}): " + " | ".join(
+            f"{h.get('role','?')} score:{h.get('score','?')} gaps:{','.join(h.get('gaps',[]))}"
+            for h in recent
+        )
+
+    system_prompt = f"""Elite ATS analyzer. {ctx}
+Return ONLY compact JSON, no markdown:
+{{"verdict":"PASS|LIKELY PASS|BORDERLINE|LIKELY REJECT|REJECT","ats_score":0-100,"apply":{{"decision":"STRONG YES|YES|WORTH A SHOT|RISKY|DON'T BOTHER","confidence":0-100,"reason":"2 sentences max"}},"scores":{{"keywords":0-100,"experience":0-100,"skills":0-100,"formatting":0-100,"impact":0-100}},"matched":["kw"],"missing_critical":["kw"],"missing_nice":["kw"],"padding":["specific padded claim"],"flags":["recruiter red flag"],"genuine":["real strength"],"strengths":["specific strength"],"fixes":["specific fix"],"profile":{{"level":"e.g. Mid-level","gap":"single biggest gap","trajectory":"1 sentence","fit_roles":["role"]}},"pattern":"1 sentence about history pattern or First analysis","summary":"2 sentences honest direct assessment"}}
+Rules: be brutally honest, specific to their actual resume, flag keyword stuffing explicitly, no hedging on apply decision."""
+
+    user_msg = f"JOB TITLE: {role}\n\nJOB DESCRIPTION:\n{jd}\n\n---\n\nRESUME:\n{resume_text}"
+
+    try:
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = resp.content[0].text if resp.content else ""
+        # Strip markdown fences and extract JSON
+        import re
+        stripped = re.sub(r"```json|```", "", text).strip()
+        match = re.search(r"\{[\s\S]*\}", stripped)
+        if not match:
+            return jsonify({"error": "Failed to parse AI response."}), 500
+        result = json.loads(match.group(0))
+        return jsonify(result), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+
+
+@app.route("/api/ats/rewrites", methods=["POST"])
+@login_required
+def ats_rewrites():
+    import anthropic
+
+    data = request.get_json()
+    jd = (data.get("jd") or "").strip()
+    resume_text = (data.get("resume") or "").strip()
+    role = (data.get("role") or "Not specified").strip()
+
+    if not jd or not resume_text:
+        return jsonify({"error": "Both job description and resume are required."}), 400
+
+    system_prompt = """You are a resume rewriter. Given a resume and job description, return ONLY JSON:
+{"rewrites":[{"section":"which bullet/section","before":"exact text from resume","after":"rewritten version with metrics and stronger language","why":"one sentence"}]}
+Max 4 rewrites. Focus on highest-impact changes. No markdown, no backticks."""
+
+    user_msg = f"JOB TITLE: {role}\n\nJOB DESCRIPTION:\n{jd}\n\n---\n\nRESUME:\n{resume_text}"
+
+    try:
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1500,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = resp.content[0].text if resp.content else ""
+        import re
+        stripped = re.sub(r"```json|```", "", text).strip()
+        match = re.search(r"\{[\s\S]*\}", stripped)
+        if not match:
+            return jsonify({"rewrites": []}), 200
+        result = json.loads(match.group(0))
+        return jsonify(result), 200
+    except Exception:
+        return jsonify({"rewrites": []}), 200
+
+
 @app.route("/api/settings/email/logs", methods=["GET"])
 @login_required
 def list_scan_logs():
