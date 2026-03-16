@@ -719,6 +719,101 @@ def add_scan_log(emails_checked, rejections_found, details_json, user_id):
     conn.close()
 
 
+def get_admin_stats():
+    """Aggregate stats across all users for the admin dashboard."""
+    conn = get_connection()
+    cur = conn.cursor()
+
+    stats = {}
+
+    # ── Users ──
+    cur.execute("SELECT COUNT(*) FROM users")
+    stats["total_users"] = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(DISTINCT user_id) FROM jobs")
+    stats["active_users"] = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(DISTINCT user_id) FROM email_settings WHERE enabled = 1")
+    stats["email_users"] = cur.fetchone()[0]
+
+    # Recent signups (last 8 weeks)
+    if USE_POSTGRES:
+        cur.execute("""
+            SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+            FROM users
+            WHERE created_at >= NOW() - INTERVAL '56 days'
+            GROUP BY DATE(created_at) ORDER BY day
+        """)
+    else:
+        cur.execute("""
+            SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+            FROM users
+            WHERE created_at >= DATE('now', '-56 days')
+            GROUP BY DATE(created_at) ORDER BY day
+        """)
+    stats["signups_over_time"] = _fetchall(cur, conn)
+
+    # ── Jobs ──
+    cur.execute("SELECT COUNT(*) FROM jobs")
+    stats["total_jobs"] = cur.fetchone()[0]
+
+    cur.execute("SELECT status, COUNT(*) AS cnt FROM jobs GROUP BY status ORDER BY cnt DESC")
+    stats["status_breakdown"] = _fetchall(cur, conn)
+
+    cur.execute("SELECT company, COUNT(*) AS cnt FROM jobs WHERE company != '' GROUP BY company ORDER BY cnt DESC LIMIT 10")
+    stats["top_companies"] = _fetchall(cur, conn)
+
+    # Jobs per week (last 8 weeks)
+    if USE_POSTGRES:
+        cur.execute("""
+            SELECT DATE_TRUNC('week', created_at)::date AS week, COUNT(*) AS cnt
+            FROM jobs
+            WHERE created_at >= NOW() - INTERVAL '56 days'
+            GROUP BY DATE_TRUNC('week', created_at) ORDER BY week
+        """)
+    else:
+        cur.execute("""
+            SELECT DATE(created_at, 'weekday 0', '-6 days') AS week, COUNT(*) AS cnt
+            FROM jobs
+            WHERE created_at >= DATE('now', '-56 days')
+            GROUP BY DATE(created_at, 'weekday 0', '-6 days') ORDER BY week
+        """)
+    stats["jobs_per_week"] = _fetchall(cur, conn)
+
+    # ── Activity ──
+    cur.execute("SELECT COUNT(*) FROM scan_log")
+    stats["total_scans"] = cur.fetchone()[0]
+
+    if USE_POSTGRES:
+        cur.execute("SELECT COUNT(*) FROM scan_log WHERE scanned_at >= NOW() - INTERVAL '7 days'")
+    else:
+        cur.execute("SELECT COUNT(*) FROM scan_log WHERE scanned_at >= DATE('now', '-7 days')")
+    stats["scans_last_week"] = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM resumes")
+    stats["total_resumes"] = cur.fetchone()[0]
+
+    # Recent jobs added (last 10)
+    cur.execute("""
+        SELECT j.company, j.role, j.status, j.created_at, u.username
+        FROM jobs j LEFT JOIN users u ON j.user_id = u.id
+        ORDER BY j.created_at DESC LIMIT 10
+    """)
+    stats["recent_jobs"] = _fetchall(cur, conn)
+
+    # Recent scans (last 10)
+    cur.execute("""
+        SELECT s.scanned_at, s.emails_checked, s.rejections_found, u.username
+        FROM scan_log s LEFT JOIN users u ON s.user_id = u.id
+        ORDER BY s.scanned_at DESC LIMIT 10
+    """)
+    stats["recent_scans"] = _fetchall(cur, conn)
+
+    cur.close()
+    conn.close()
+    return stats
+
+
 def get_scan_logs(user_id, limit=20):
     conn = get_connection()
     cur = conn.cursor()

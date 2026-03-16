@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Tracker — Admin Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1d23; padding: 24px 32px; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .subtitle { color: #6c757d; font-size: 0.9rem; margin-bottom: 24px; }
+  .config-bar { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; padding: 14px 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .config-bar label { font-size: 0.85rem; font-weight: 600; color: #6c757d; }
+  .config-bar input { flex: 1; min-width: 200px; padding: 6px 12px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 0.85rem; }
+  .config-bar button { padding: 6px 16px; border: none; border-radius: 6px; background: #0d6efd; color: #fff; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+  .config-bar button:hover { background: #0b5ed7; }
+  #error { color: #dc3545; font-size: 0.85rem; display: none; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+  .card { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; padding: 20px; text-align: center; }
+  .card .value { font-size: 2rem; font-weight: 700; color: #0d6efd; }
+  .card .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; font-weight: 600; margin-top: 4px; }
+
+  .loading { text-align: center; padding: 60px; color: #6c757d; font-size: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Admin Dashboard</h1>
+<p class="subtitle">Job Tracker usage analytics — private view</p>
+
+<div class="config-bar">
+  <label>API URL</label>
+  <input id="apiUrl" placeholder="https://your-app.onrender.com" />
+  <label>Admin Key</label>
+  <input id="adminKey" type="password" placeholder="optional" />
+  <button onclick="fetchStats()">Load Data</button>
+  <span id="error"></span>
+</div>
+
+<div id="dashboard" style="display:none">
+  <div class="cards">
+    <div class="card"><div class="value" id="v-users">—</div><div class="label">Total Users</div></div>
+    <div class="card"><div class="value" id="v-active">—</div><div class="label">Active Users</div></div>
+    <div class="card"><div class="value" id="v-jobs">—</div><div class="label">Total Jobs</div></div>
+    <div class="card"><div class="value" id="v-resumes">—</div><div class="label">Resumes Uploaded</div></div>
+    <div class="card"><div class="value" id="v-scans">—</div><div class="label">Email Scans</div></div>
+    <div class="card"><div class="value" id="v-email">—</div><div class="label">Email Integrations</div></div>
+  </div>
+</div>
+
+<div id="loadingMsg" class="loading" style="display:none">Loading dashboard data...</div>
+
+<script>
+// Persist config
+const saved = localStorage.getItem('admin_dash_config');
+if (saved) {
+  const c = JSON.parse(saved);
+  document.getElementById('apiUrl').value = c.url || '';
+  document.getElementById('adminKey').value = c.key || '';
+}
+
+async function fetchStats() {
+  const url = document.getElementById('apiUrl').value.replace(/\/+$/, '');
+  const key = document.getElementById('adminKey').value.trim();
+  const errEl = document.getElementById('error');
+  errEl.style.display = 'none';
+
+  const baseUrl = url || window.location.origin;
+  if (!url && window.location.protocol === 'file:') { errEl.textContent = 'Enter your app URL'; errEl.style.display = 'inline'; return; }
+
+  localStorage.setItem('admin_dash_config', JSON.stringify({ url, key }));
+
+  document.getElementById('loadingMsg').style.display = 'block';
+  document.getElementById('dashboard').style.display = 'none';
+
+  try {
+    const headers = {};
+    if (key) headers['X-Admin-Key'] = key;
+    const resp = await fetch(baseUrl + '/api/admin/stats', { headers, credentials: 'include' });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    renderDashboard(data);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'inline';
+    document.getElementById('loadingMsg').style.display = 'none';
+  }
+}
+
+function renderDashboard(d) {
+  document.getElementById('loadingMsg').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+
+  document.getElementById('v-users').textContent = d.total_users;
+  document.getElementById('v-active').textContent = d.active_users;
+  document.getElementById('v-jobs').textContent = d.total_jobs;
+  document.getElementById('v-resumes').textContent = d.total_resumes;
+  document.getElementById('v-scans').textContent = d.total_scans;
+  document.getElementById('v-email').textContent = d.email_users;
+}
+
+// Auto-load if config exists
+if (document.getElementById('apiUrl').value) {
+  fetchStats();
+}
+</script>
+</body>
+</html>

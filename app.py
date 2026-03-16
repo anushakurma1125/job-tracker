@@ -14,7 +14,8 @@ from database import (init_db, add_job, get_jobs, get_job, update_job, delete_jo
                        get_earliest_applied_date, get_active_jobs,
                        add_scan_log, get_scan_logs,
                        save_scan_checkpoint, clear_scan_checkpoint,
-                       create_user, get_user_by_username)
+                       create_user, get_user_by_username,
+                       get_admin_stats)
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -159,6 +160,11 @@ def logout():
 @login_required
 def index():
     return render_template("index.html", display_name=session.get("display_name", ""))
+
+
+@app.route("/admin-dashboard")
+def serve_admin_dashboard():
+    return send_file("admin_dashboard.html")
 
 
 @app.route("/api/jobs", methods=["GET"])
@@ -656,6 +662,34 @@ Max 4 rewrites. Focus on highest-impact changes. No markdown, no backticks."""
         return jsonify(result), 200
     except Exception:
         return jsonify({"rewrites": []}), 200
+
+
+@app.after_request
+def _cors_admin(response):
+    """Add CORS headers for the admin stats endpoint."""
+    if request.path == "/api/admin/stats":
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
+        response.headers["Access-Control-Max-Age"] = "3600"
+    return response
+
+
+@app.route("/api/admin/stats", methods=["GET", "OPTIONS"])
+def admin_stats():
+    if request.method == "OPTIONS":
+        return "", 204
+    # Auth: either session (user_id=1) or X-Admin-Key header
+    admin_key = os.environ.get("ADMIN_DASHBOARD_KEY", "")
+    req_key = request.headers.get("X-Admin-Key", "")
+    if req_key and admin_key and req_key == admin_key:
+        pass  # key-based auth OK
+    elif session.get("user_id") == 1:
+        pass  # session auth OK
+    else:
+        return jsonify({"error": "Forbidden"}), 403
+    stats = get_admin_stats()
+    return jsonify(stats)
 
 
 @app.route("/api/settings/email/logs", methods=["GET"])
