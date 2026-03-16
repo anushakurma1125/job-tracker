@@ -809,6 +809,19 @@ def get_admin_stats():
     """)
     stats["recent_scans"] = _fetchall(cur, conn)
 
+    # User list with email and job count
+    cur.execute("""
+        SELECT u.id, u.username, u.display_name, u.created_at,
+               COALESCE(e.gmail_email, '') AS email,
+               COUNT(j.id) AS job_count
+        FROM users u
+        LEFT JOIN email_settings e ON u.id = e.user_id AND e.enabled = 1
+        LEFT JOIN jobs j ON u.id = j.user_id
+        GROUP BY u.id, u.username, u.display_name, u.created_at, e.gmail_email
+        ORDER BY u.created_at DESC
+    """)
+    stats["users"] = _fetchall(cur, conn)
+
     cur.close()
     conn.close()
     return stats

@@ -21,6 +21,12 @@
   .card .value { font-size: 2rem; font-weight: 700; color: #0d6efd; }
   .card .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; font-weight: 600; margin-top: 4px; }
 
+  .user-table { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; padding: 20px; margin-top: 24px; }
+  .user-table h3 { font-size: 0.95rem; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; font-weight: 600; padding: 8px 6px; border-bottom: 2px solid #e9ecef; }
+  td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; }
+
   .loading { text-align: center; padding: 60px; color: #6c757d; font-size: 1rem; }
 </style>
 </head>
@@ -46,6 +52,14 @@
     <div class="card"><div class="value" id="v-resumes">—</div><div class="label">Resumes Uploaded</div></div>
     <div class="card"><div class="value" id="v-scans">—</div><div class="label">Email Scans</div></div>
     <div class="card"><div class="value" id="v-email">—</div><div class="label">Email Integrations</div></div>
+  </div>
+
+  <div class="user-table">
+    <h3>All Users</h3>
+    <table>
+      <thead><tr><th>#</th><th>Username</th><th>Display Name</th><th>Email</th><th>Jobs</th><th>Joined</th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
   </div>
 </div>
 
@@ -101,6 +115,20 @@ function renderDashboard(d) {
   document.getElementById('v-resumes').textContent = d.total_resumes;
   document.getElementById('v-scans').textContent = d.total_scans;
   document.getElementById('v-email').textContent = d.email_users;
+
+  // Users table
+  const usersHtml = (d.users || []).map(u => {
+    const joined = u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    return `<tr><td>${esc(String(u.id))}</td><td>${esc(u.username)}</td><td>${esc(u.display_name||'')}</td><td>${esc(u.email||'—')}</td><td>${u.job_count}</td><td>${joined}</td></tr>`;
+  }).join('');
+  document.getElementById('userRows').innerHTML = usersHtml || '<tr><td colspan="6" style="text-align:center;color:#6c757d">No users</td></tr>';
+}
+
+function esc(s) {
+  if (!s) return '';
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
 }
 
 // Auto-load if config exists
