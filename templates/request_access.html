@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Request Access — Job Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .login-card {
+            max-width: 440px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <div class="text-center mb-4">
+                    <i class="bi bi-briefcase" style="font-size: 2.5rem; color: #0d6efd;"></i>
+                    <h4 class="mt-2 fw-bold">Job Tracker</h4>
+                    <p class="text-muted small">Request access to start tracking your applications</p>
+                </div>
+
+                {% if success %}
+                <div class="text-center py-3">
+                    <i class="bi bi-check-circle" style="font-size: 3rem; color: #198754;"></i>
+                    <h5 class="mt-3 fw-bold">Request Submitted!</h5>
+                    <p class="text-muted">We'll review your request and get back to you with an invite link.</p>
+                    <a href="/login" class="btn btn-outline-primary btn-sm mt-2">Back to Login</a>
+                </div>
+                {% else %}
+
+                {% if error %}
+                <div class="alert alert-danger py-2 small">{{ error }}</div>
+                {% endif %}
+
+                <form method="POST" action="/request-access">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Full Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="about" class="form-label">Tell me about yourself</label>
+                        <textarea class="form-control" id="about" name="about" rows="3" placeholder="What do you do? Why do you want to use Job Tracker?"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-send me-1"></i> Request Access
+                    </button>
+                </form>
+                {% endif %}
+
+                <div class="text-center mt-3">
+                    <small class="text-muted">Already have an account? <a href="/login">Sign in</a></small>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

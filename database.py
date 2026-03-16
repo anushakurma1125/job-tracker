@@ -1,4 +1,5 @@
 import os
+import uuid
 import sqlite3
 from datetime import datetime
 
@@ -167,6 +168,19 @@ def init_db():
         if "user_id" not in scan_cols:
             cur.execute("ALTER TABLE scan_log ADD COLUMN user_id INTEGER DEFAULT 1")
             conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                about TEXT DEFAULT '',
+                status TEXT DEFAULT 'pending',
+                invite_token TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
     else:
         # ── Users table ──
         cur.execute("""
@@ -274,6 +288,19 @@ def init_db():
         if "user_id" not in scan_cols:
             cur.execute("ALTER TABLE scan_log ADD COLUMN user_id INTEGER DEFAULT 1")
             conn.commit()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                about TEXT DEFAULT '',
+                status TEXT DEFAULT 'pending',
+                invite_token TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
 
     cur.close()
     conn.close()
@@ -838,3 +865,78 @@ def get_scan_logs(user_id, limit=20):
     cur.close()
     conn.close()
     return logs
+
+
+# ── Access Requests ──
+
+def create_access_request(name, email, about):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"INSERT INTO access_requests (name, email, about) VALUES ({_ph(3)})",
+        (name, email, about),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_access_requests():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM access_requests ORDER BY created_at DESC")
+    rows = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return rows
+
+
+def approve_access_request(request_id):
+    token = str(uuid.uuid4())
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE access_requests SET status = 'approved', invite_token = {_ph()} WHERE id = {_ph()}",
+        (token, request_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return token
+
+
+def reject_access_request(request_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE access_requests SET status = 'rejected' WHERE id = {_ph()}",
+        (request_id,),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_request_by_token(token):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT * FROM access_requests WHERE invite_token = {_ph()} AND status = 'approved'",
+        (token,),
+    )
+    row = _fetchone(cur, conn)
+    cur.close()
+    conn.close()
+    return row
+
+
+def mark_token_used(token):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE access_requests SET status = 'registered' WHERE invite_token = {_ph()}",
+        (token,),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()

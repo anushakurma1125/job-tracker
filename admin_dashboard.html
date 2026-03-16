@@ -21,11 +21,24 @@
   .card .value { font-size: 2rem; font-weight: 700; color: #0d6efd; }
   .card .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; font-weight: 600; margin-top: 4px; }
 
-  .user-table { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; padding: 20px; margin-top: 24px; }
-  .user-table h3 { font-size: 0.95rem; margin-bottom: 12px; }
+  .section { background: #fff; border: 1px solid #e1e4e8; border-radius: 10px; padding: 20px; margin-top: 24px; }
+  .section h3 { font-size: 0.95rem; margin-bottom: 12px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th { text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6c757d; font-weight: 600; padding: 8px 6px; border-bottom: 2px solid #e9ecef; }
-  td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; }
+  td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+
+  .btn-sm { padding: 3px 10px; border: none; border-radius: 4px; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+  .btn-approve { background: #198754; color: #fff; }
+  .btn-approve:hover { background: #157347; }
+  .btn-reject { background: #dc3545; color: #fff; margin-left: 4px; }
+  .btn-reject:hover { background: #bb2d3b; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+  .badge-pending { background: #fff3cd; color: #856404; }
+  .badge-approved { background: #d1e7dd; color: #0f5132; }
+  .badge-rejected { background: #f8d7da; color: #842029; }
+  .badge-registered { background: #cff4fc; color: #055160; }
+  .invite-link { font-size: 0.78rem; color: #0d6efd; word-break: break-all; }
+  .about-text { max-width: 250px; font-size: 0.8rem; color: #495057; }
 
   .loading { text-align: center; padding: 60px; color: #6c757d; font-size: 1rem; }
 </style>
@@ -40,7 +53,7 @@
   <input id="apiUrl" placeholder="https://your-app.onrender.com" />
   <label>Admin Key</label>
   <input id="adminKey" type="password" placeholder="optional" />
-  <button onclick="fetchStats()">Load Data</button>
+  <button onclick="fetchAll()">Load Data</button>
   <span id="error"></span>
 </div>
 
@@ -54,7 +67,15 @@
     <div class="card"><div class="value" id="v-email">—</div><div class="label">Email Integrations</div></div>
   </div>
 
-  <div class="user-table">
+  <div class="section" id="requestsSection">
+    <h3>Access Requests</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>About</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="requestRows"></tbody>
+    </table>
+  </div>
+
+  <div class="section">
     <h3>All Users</h3>
     <table>
       <thead><tr><th>#</th><th>Username</th><th>Display Name</th><th>Email</th><th>Jobs</th><th>Joined</th></tr></thead>
@@ -66,7 +87,8 @@
 <div id="loadingMsg" class="loading" style="display:none">Loading dashboard data...</div>
 
 <script>
-// Persist config
+let _baseUrl = '';
+
 const saved = localStorage.getItem('admin_dash_config');
 if (saved) {
   const c = JSON.parse(saved);
@@ -74,30 +96,38 @@ if (saved) {
   document.getElementById('adminKey').value = c.key || '';
 }
 
-async function fetchStats() {
-  const url = document.getElementById('apiUrl').value.replace(/\/+$/, '');
+function getHeaders() {
   const key = document.getElementById('adminKey').value.trim();
+  const h = {};
+  if (key) h['X-Admin-Key'] = key;
+  return h;
+}
+
+async function fetchAll() {
+  const url = document.getElementById('apiUrl').value.replace(/\/+$/, '');
   const errEl = document.getElementById('error');
   errEl.style.display = 'none';
 
-  const baseUrl = url || window.location.origin;
+  _baseUrl = url || window.location.origin;
   if (!url && window.location.protocol === 'file:') { errEl.textContent = 'Enter your app URL'; errEl.style.display = 'inline'; return; }
 
-  localStorage.setItem('admin_dash_config', JSON.stringify({ url, key }));
+  localStorage.setItem('admin_dash_config', JSON.stringify({ url, key: document.getElementById('adminKey').value.trim() }));
 
   document.getElementById('loadingMsg').style.display = 'block';
   document.getElementById('dashboard').style.display = 'none';
 
   try {
-    const headers = {};
-    if (key) headers['X-Admin-Key'] = key;
-    const resp = await fetch(baseUrl + '/api/admin/stats', { headers, credentials: 'include' });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${resp.status}`);
+    const [statsResp, reqResp] = await Promise.all([
+      fetch(_baseUrl + '/api/admin/stats', { headers: getHeaders(), credentials: 'include' }),
+      fetch(_baseUrl + '/api/admin/access-requests', { headers: getHeaders(), credentials: 'include' })
+    ]);
+    if (!statsResp.ok) {
+      const body = await statsResp.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${statsResp.status}`);
     }
-    const data = await resp.json();
-    renderDashboard(data);
+    const stats = await statsResp.json();
+    const requests = reqResp.ok ? await reqResp.json() : [];
+    renderDashboard(stats, requests);
   } catch (e) {
     errEl.textContent = e.message;
     errEl.style.display = 'inline';
@@ -105,7 +135,7 @@ async function fetchStats() {
   }
 }
 
-function renderDashboard(d) {
+function renderDashboard(d, requests) {
   document.getElementById('loadingMsg').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
 
@@ -116,12 +146,53 @@ function renderDashboard(d) {
   document.getElementById('v-scans').textContent = d.total_scans;
   document.getElementById('v-email').textContent = d.email_users;
 
+  // Access requests table
+  renderRequests(requests);
+
   // Users table
   const usersHtml = (d.users || []).map(u => {
     const joined = u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     return `<tr><td>${esc(String(u.id))}</td><td>${esc(u.username)}</td><td>${esc(u.display_name||'')}</td><td>${esc(u.email||'—')}</td><td>${u.job_count}</td><td>${joined}</td></tr>`;
   }).join('');
   document.getElementById('userRows').innerHTML = usersHtml || '<tr><td colspan="6" style="text-align:center;color:#6c757d">No users</td></tr>';
+}
+
+function renderRequests(requests) {
+  const html = (requests || []).map(r => {
+    const date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const badgeClass = 'badge-' + (r.status || 'pending');
+    let actions = '';
+    if (r.status === 'pending') {
+      actions = `<button class="btn-sm btn-approve" onclick="approveReq(${r.id})">Approve</button><button class="btn-sm btn-reject" onclick="rejectReq(${r.id})">Reject</button>`;
+    } else if (r.status === 'approved' && r.invite_token) {
+      actions = `<span class="invite-link" id="link-${r.id}">${_baseUrl}/signup?token=${r.invite_token}</span>`;
+    }
+    return `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td class="about-text">${esc(r.about||'')}</td><td>${date}</td><td><span class="badge ${badgeClass}">${r.status}</span></td><td>${actions}</td></tr>`;
+  }).join('');
+  document.getElementById('requestRows').innerHTML = html || '<tr><td colspan="6" style="text-align:center;color:#6c757d">No requests yet</td></tr>';
+}
+
+async function approveReq(id) {
+  try {
+    const resp = await fetch(_baseUrl + '/api/admin/access-requests/' + id + '/approve', {
+      method: 'POST', headers: getHeaders(), credentials: 'include'
+    });
+    if (!resp.ok) throw new Error('Failed to approve');
+    const data = await resp.json();
+    alert('Approved! Invite link:\n\n' + data.invite_url);
+    fetchAll();
+  } catch (e) { alert(e.message); }
+}
+
+async function rejectReq(id) {
+  if (!confirm('Reject this request?')) return;
+  try {
+    const resp = await fetch(_baseUrl + '/api/admin/access-requests/' + id + '/reject', {
+      method: 'POST', headers: getHeaders(), credentials: 'include'
+    });
+    if (!resp.ok) throw new Error('Failed to reject');
+    fetchAll();
+  } catch (e) { alert(e.message); }
 }
 
 function esc(s) {
@@ -133,7 +204,7 @@ function esc(s) {
 
 // Auto-load if config exists
 if (document.getElementById('apiUrl').value) {
-  fetchStats();
+  fetchAll();
 }
 </script>
 </body>

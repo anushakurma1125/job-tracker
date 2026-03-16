@@ -15,7 +15,10 @@ from database import (init_db, add_job, get_jobs, get_job, update_job, delete_jo
                        add_scan_log, get_scan_logs,
                        save_scan_checkpoint, clear_scan_checkpoint,
                        create_user, get_user_by_username,
-                       get_admin_stats)
+                       get_admin_stats,
+                       create_access_request, get_access_requests,
+                       approve_access_request, reject_access_request,
+                       get_request_by_token, mark_token_used)
 from extractor import extract_job_details
 
 app = Flask(__name__)
@@ -124,6 +127,15 @@ def login():
 def signup():
     if session.get("user_id"):
         return redirect(url_for("index"))
+
+    token = request.args.get("token", "") or request.form.get("token", "")
+    if not token:
+        return render_template("signup.html", error="An invite link is required to create an account.", no_form=True)
+
+    invite = get_request_by_token(token)
+    if not invite:
+        return render_template("signup.html", error="Invalid or expired invite link.", no_form=True)
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         display_name = request.form.get("display_name", "").strip()
@@ -131,23 +143,69 @@ def signup():
         confirm = request.form.get("confirm_password", "")
 
         if not username or not password:
-            return render_template("signup.html", error="Username and password are required")
+            return render_template("signup.html", error="Username and password are required", token=token, invite=invite)
         if len(password) < 6:
-            return render_template("signup.html", error="Password must be at least 6 characters")
+            return render_template("signup.html", error="Password must be at least 6 characters", token=token, invite=invite)
         if password != confirm:
-            return render_template("signup.html", error="Passwords do not match")
+            return render_template("signup.html", error="Passwords do not match", token=token, invite=invite)
 
         existing = get_user_by_username(username)
         if existing:
-            return render_template("signup.html", error="Username already taken")
+            return render_template("signup.html", error="Username already taken", token=token, invite=invite)
 
         password_hash = generate_password_hash(password)
-        user = create_user(username, password_hash, display_name or username)
+        user = create_user(username, password_hash, display_name or invite.get("name", username))
+        mark_token_used(token)
 
         session["user_id"] = user["id"]
         session["display_name"] = user["display_name"]
         return redirect(url_for("index"))
-    return render_template("signup.html")
+    return render_template("signup.html", token=token, invite=invite)
+
+
+@app.route("/request-access", methods=["GET", "POST"])
+def request_access():
+    if session.get("user_id"):
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip()
+        about = request.form.get("about", "").strip()
+
+        if not name or not email:
+            return render_template("request_access.html", error="Name and email are required")
+
+        create_access_request(name, email, about)
+
+        # Try sending admin notification email
+        _send_access_request_email(name, email, about)
+
+        return render_template("request_access.html", success=True)
+    return render_template("request_access.html")
+
+
+def _send_access_request_email(name, email, about):
+    """Send notification email to admin. Fails silently if not configured."""
+    admin_email = os.environ.get("ADMIN_EMAIL", "")
+    app_password = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not admin_email or not app_password:
+        return
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(
+            f"New access request for Job Tracker:\n\n"
+            f"Name: {name}\nEmail: {email}\n\nAbout:\n{about}\n\n"
+            f"Go to your admin dashboard to approve or reject."
+        )
+        msg["Subject"] = f"Job Tracker Access Request — {name}"
+        msg["From"] = admin_email
+        msg["To"] = admin_email
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(admin_email, app_password)
+            s.send_message(msg)
+    except Exception:
+        pass  # Email is optional — request is saved to DB regardless
 
 
 @app.route("/logout")
@@ -690,6 +748,34 @@ def admin_stats():
         return jsonify({"error": "Forbidden"}), 403
     stats = get_admin_stats()
     return jsonify(stats)
+
+
+@app.route("/api/admin/access-requests", methods=["GET"])
+@login_required
+def list_access_requests():
+    if current_user_id() != 1:
+        return jsonify({"error": "Forbidden"}), 403
+    return jsonify(get_access_requests())
+
+
+@app.route("/api/admin/access-requests/<int:req_id>/approve", methods=["POST"])
+@login_required
+def approve_request(req_id):
+    if current_user_id() != 1:
+        return jsonify({"error": "Forbidden"}), 403
+    token = approve_access_request(req_id)
+    base_url = request.url_root.rstrip("/")
+    invite_url = f"{base_url}/signup?token={token}"
+    return jsonify({"token": token, "invite_url": invite_url})
+
+
+@app.route("/api/admin/access-requests/<int:req_id>/reject", methods=["POST"])
+@login_required
+def reject_request(req_id):
+    if current_user_id() != 1:
+        return jsonify({"error": "Forbidden"}), 403
+    reject_access_request(req_id)
+    return jsonify({"message": "Request rejected"})
 
 
 @app.route("/api/settings/email/logs", methods=["GET"])

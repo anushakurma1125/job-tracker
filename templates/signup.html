@@ -32,17 +32,30 @@
                 </div>
 
                 {% if error %}
-                <div class="alert alert-danger py-2 small">{{ error }}</div>
+                <div class="alert alert-{{ 'danger' if not no_form else 'warning' }} py-2 small">{{ error }}</div>
                 {% endif %}
 
-                <form method="POST" action="/signup">
+                {% if no_form %}
+                <div class="text-center mt-3">
+                    <a href="/request-access" class="btn btn-primary btn-sm">Request Access</a>
+                    <p class="text-muted small mt-2">Or <a href="/login">sign in</a> if you already have an account.</p>
+                </div>
+                {% else %}
+                <form method="POST" action="/signup?token={{ token }}">
+                    <input type="hidden" name="token" value="{{ token }}">
+                    {% if invite %}
+                    <div class="alert alert-success py-2 small mb-3">
+                        <i class="bi bi-check-circle me-1"></i> Welcome, {{ invite.name }}! Set up your login below.
+                    </div>
+                    {% endif %}
                     <div class="mb-3">
                         <label for="username" class="form-label">Username</label>
                         <input type="text" class="form-control" id="username" name="username" required autofocus>
                     </div>
                     <div class="mb-3">
                         <label for="display_name" class="form-label">Display Name</label>
-                        <input type="text" class="form-control" id="display_name" name="display_name" placeholder="How should we greet you?">
+                        <input type="text" class="form-control" id="display_name" name="display_name"
+                               value="{{ invite.name if invite else '' }}" placeholder="How should we greet you?">
                     </div>
                     <div class="mb-3">
                         <label for="password" class="form-label">Password</label>
@@ -59,6 +72,7 @@
                 <div class="text-center mt-3">
                     <small class="text-muted">Already have an account? <a href="/login">Sign in</a></small>
                 </div>
+                {% endif %}
             </div>
         </div>
     </div>
