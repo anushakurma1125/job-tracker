@@ -724,10 +724,10 @@ Max 4 rewrites. Focus on highest-impact changes. No markdown, no backticks."""
 
 @app.after_request
 def _cors_admin(response):
-    """Add CORS headers for the admin stats endpoint."""
-    if request.path == "/api/admin/stats":
+    """Add CORS headers for admin endpoints."""
+    if request.path.startswith("/api/admin/"):
         response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
         response.headers["Access-Control-Max-Age"] = "3600"
     return response
@@ -737,31 +737,37 @@ def _cors_admin(response):
 def admin_stats():
     if request.method == "OPTIONS":
         return "", 204
-    # Auth: either session (user_id=1) or X-Admin-Key header
-    admin_key = os.environ.get("ADMIN_DASHBOARD_KEY", "")
-    req_key = request.headers.get("X-Admin-Key", "")
-    if req_key and admin_key and req_key == admin_key:
-        pass  # key-based auth OK
-    elif session.get("user_id") == 1:
-        pass  # session auth OK
-    else:
+    if not _check_admin():
         return jsonify({"error": "Forbidden"}), 403
     stats = get_admin_stats()
     return jsonify(stats)
 
 
-@app.route("/api/admin/access-requests", methods=["GET"])
-@login_required
+def _check_admin():
+    """Return True if caller is admin (session user_id=1 or valid X-Admin-Key)."""
+    admin_key = os.environ.get("ADMIN_DASHBOARD_KEY", "")
+    req_key = request.headers.get("X-Admin-Key", "")
+    if req_key and admin_key and req_key == admin_key:
+        return True
+    if session.get("user_id") == 1:
+        return True
+    return False
+
+
+@app.route("/api/admin/access-requests", methods=["GET", "OPTIONS"])
 def list_access_requests():
-    if current_user_id() != 1:
+    if request.method == "OPTIONS":
+        return "", 204
+    if not _check_admin():
         return jsonify({"error": "Forbidden"}), 403
     return jsonify(get_access_requests())
 
 
-@app.route("/api/admin/access-requests/<int:req_id>/approve", methods=["POST"])
-@login_required
+@app.route("/api/admin/access-requests/<int:req_id>/approve", methods=["POST", "OPTIONS"])
 def approve_request(req_id):
-    if current_user_id() != 1:
+    if request.method == "OPTIONS":
+        return "", 204
+    if not _check_admin():
         return jsonify({"error": "Forbidden"}), 403
     token = approve_access_request(req_id)
     base_url = request.url_root.rstrip("/")
@@ -769,10 +775,11 @@ def approve_request(req_id):
     return jsonify({"token": token, "invite_url": invite_url})
 
 
-@app.route("/api/admin/access-requests/<int:req_id>/reject", methods=["POST"])
-@login_required
+@app.route("/api/admin/access-requests/<int:req_id>/reject", methods=["POST", "OPTIONS"])
 def reject_request(req_id):
-    if current_user_id() != 1:
+    if request.method == "OPTIONS":
+        return "", 204
+    if not _check_admin():
         return jsonify({"error": "Forbidden"}), 403
     reject_access_request(req_id)
     return jsonify({"message": "Request rejected"})
