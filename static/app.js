@@ -774,27 +774,50 @@ async function loadSettings() {
         const res = await fetch("/api/settings/email");
         const data = await res.json();
 
-        const notConnected = document.getElementById("emailNotConnected");
-        const connected = document.getElementById("emailConnected");
         const notConfigured = document.getElementById("emailNotConfigured");
         const connectBtn = document.getElementById("connectGmailBtn");
+        const accountsList = document.getElementById("emailAccountsList");
+        const scanAllRow = document.getElementById("emailScanAllRow");
 
-        if (data.connected) {
-            notConnected.classList.add("d-none");
-            connected.classList.remove("d-none");
-            document.getElementById("connectedEmail").textContent = data.email || "Connected";
-            document.getElementById("lastScannedAt").textContent =
-                data.last_scanned_at ? formatDateTime(data.last_scanned_at) : "Never";
+        const accounts = data.accounts || [];
+        emailConnected = accounts.length > 0;
+
+        // Render accounts list
+        if (accounts.length > 0) {
+            accountsList.innerHTML = accounts.map(acct => `
+                <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 mb-2">
+                    <div class="settings-status-dot bg-success"></div>
+                    <div class="flex-grow-1">
+                        <div class="fw-semibold">${escapeHtml(acct.email)}</div>
+                        <div class="text-muted small">
+                            Last scanned: ${acct.last_scanned_at ? formatDateTime(acct.last_scanned_at) : "Never"}
+                        </div>
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm" onclick="disconnectGmail(${acct.id})">
+                        <i class="bi bi-x-circle me-1"></i> Disconnect
+                    </button>
+                </div>
+            `).join("");
+            scanAllRow.classList.remove("d-none");
         } else {
-            notConnected.classList.remove("d-none");
-            connected.classList.add("d-none");
-            if (!data.configured) {
-                notConfigured.classList.remove("d-none");
-                connectBtn.disabled = true;
-            } else {
-                notConfigured.classList.add("d-none");
-                connectBtn.disabled = false;
-            }
+            accountsList.innerHTML = "";
+            scanAllRow.classList.add("d-none");
+        }
+
+        // Show/hide not-configured warning
+        if (!data.configured) {
+            notConfigured.classList.remove("d-none");
+            connectBtn.disabled = true;
+        } else {
+            notConfigured.classList.add("d-none");
+            connectBtn.disabled = false;
+        }
+
+        // Update scan button on jobs page
+        const scanBtn = document.getElementById("scanEmailBtn");
+        if (scanBtn) {
+            if (emailConnected) scanBtn.classList.remove("d-none");
+            else scanBtn.classList.add("d-none");
         }
     } catch (e) {
         console.error("Failed to load settings:", e);
@@ -829,14 +852,15 @@ async function connectGmail() {
     }
 }
 
-async function disconnectGmail() {
-    if (!confirm("Disconnect your Gmail? You won't be able to scan for rejection emails until you reconnect.")) return;
+async function disconnectGmail(accountId) {
+    if (!confirm("Disconnect this Gmail account?")) return;
 
     try {
-        await fetch("/api/settings/email/disconnect", { method: "POST" });
-        // Hide the scan button on jobs page
-        const btn = document.getElementById("scanEmailBtn");
-        if (btn) btn.classList.add("d-none");
+        await fetch("/api/settings/email/disconnect", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ account_id: accountId }),
+        });
         loadSettings();
     } catch (e) {
         alert("Failed to disconnect. Please try again.");
@@ -890,7 +914,7 @@ async function triggerEmailScan() {
 
 function setScanButtonsLoading(loading) {
     const scanBtn = document.getElementById("scanEmailBtn");
-    const settingsBtn = document.querySelector("#emailConnected .btn-outline-primary");
+    const settingsBtn = document.querySelector("#emailScanAllRow .btn-outline-primary");
 
     if (loading) {
         origScanBtnHtml = scanBtn ? scanBtn.innerHTML : "";
@@ -910,7 +934,7 @@ function setScanButtonsLoading(loading) {
         }
         if (settingsBtn) {
             settingsBtn.disabled = false;
-            settingsBtn.innerHTML = origSettingsBtnHtml || '<i class="bi bi-envelope-check me-1"></i> Scan Now';
+            settingsBtn.innerHTML = origSettingsBtnHtml || '<i class="bi bi-envelope-check me-1"></i> Scan All Accounts';
         }
     }
 }

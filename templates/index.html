@@ -281,47 +281,38 @@
                             </div>
                         </div>
 
-                        <!-- Not Connected State -->
-                        <div id="emailNotConnected">
-                            <div class="alert alert-light border mb-3">
-                                <div class="d-flex align-items-start gap-2">
-                                    <i class="bi bi-info-circle text-primary mt-1"></i>
-                                    <div class="small">
-                                        <strong>How it works:</strong> Once connected, click "Check for job updates" on the Applications page.
-                                        We'll scan your inbox for rejection emails and automatically update matching job statuses.
-                                    </div>
+                        <div class="alert alert-light border mb-3">
+                            <div class="d-flex align-items-start gap-2">
+                                <i class="bi bi-info-circle text-primary mt-1"></i>
+                                <div class="small">
+                                    <strong>How it works:</strong> Connect one or more Gmail accounts, then click "Scan Now" or "Check for job updates" on the Applications page.
+                                    We'll scan your inboxes for rejection emails and automatically update matching job statuses.
                                 </div>
                             </div>
-                            <div id="emailNotConfigured" class="d-none">
-                                <div class="alert alert-warning py-2 small mb-3">
-                                    <i class="bi bi-exclamation-triangle me-1"></i>
-                                    Google OAuth credentials not configured. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> environment variables.
-                                </div>
-                            </div>
-                            <button class="btn btn-primary" id="connectGmailBtn" onclick="connectGmail()">
-                                <i class="bi bi-google me-1"></i> Connect Gmail
-                            </button>
                         </div>
 
-                        <!-- Connected State -->
-                        <div id="emailConnected" class="d-none">
-                            <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 mb-3">
-                                <div class="settings-status-dot bg-success"></div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-semibold" id="connectedEmail">—</div>
-                                    <div class="text-muted small">
-                                        Last scanned: <span id="lastScannedAt">Never</span>
-                                    </div>
-                                </div>
-                                <button class="btn btn-outline-primary btn-sm" onclick="triggerEmailScan()">
-                                    <i class="bi bi-envelope-check me-1"></i> Scan Now
-                                </button>
-                                <button class="btn btn-outline-danger btn-sm" onclick="disconnectGmail()">
-                                    <i class="bi bi-x-circle me-1"></i> Disconnect
-                                </button>
+                        <div id="emailNotConfigured" class="d-none">
+                            <div class="alert alert-warning py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                Google OAuth credentials not configured. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> environment variables.
                             </div>
-                            <div id="settingsScanResult" class="d-none"></div>
                         </div>
+
+                        <!-- Connected accounts list -->
+                        <div id="emailAccountsList" class="mb-3"></div>
+
+                        <!-- Scan all button (shown when accounts connected) -->
+                        <div id="emailScanAllRow" class="d-none mb-3">
+                            <button class="btn btn-outline-primary btn-sm" onclick="triggerEmailScan()">
+                                <i class="bi bi-envelope-check me-1"></i> Scan All Accounts
+                            </button>
+                            <div id="settingsScanResult" class="d-none mt-2"></div>
+                        </div>
+
+                        <!-- Add account button -->
+                        <button class="btn btn-primary" id="connectGmailBtn" onclick="connectGmail()">
+                            <i class="bi bi-google me-1"></i> Add Gmail Account
+                        </button>
                     </div>
                 </div>
 

@@ -646,16 +646,20 @@ def get_email_settings(user_id):
 
 
 def save_email_settings(gmail_credentials, gmail_email, user_id):
+    """Save email credentials. Deduplicates by gmail_email per user — updates if same email exists, inserts otherwise."""
     conn = get_connection()
     cur = conn.cursor()
-    # Check if settings exist for this user
-    cur.execute(f"SELECT id FROM email_settings WHERE user_id = {_ph()} LIMIT 1", (user_id,))
+    # Check if this specific email already exists for this user
+    cur.execute(
+        f"SELECT id FROM email_settings WHERE user_id = {_ph()} AND gmail_email = {_ph()} LIMIT 1",
+        (user_id, gmail_email),
+    )
     existing = cur.fetchone()
     if existing:
         row_id = existing[0] if not isinstance(existing, dict) else existing["id"]
         cur.execute(
-            f"UPDATE email_settings SET gmail_credentials = {_ph()}, gmail_email = {_ph()}, enabled = 1 WHERE id = {_ph()}",
-            (gmail_credentials, gmail_email, row_id),
+            f"UPDATE email_settings SET gmail_credentials = {_ph()}, enabled = 1 WHERE id = {_ph()}",
+            (gmail_credentials, row_id),
         )
     else:
         cur.execute(
@@ -668,7 +672,7 @@ def save_email_settings(gmail_credentials, gmail_email, user_id):
 
 
 def get_gmail_credentials(user_id):
-    """Return the raw gmail_credentials JSON string."""
+    """Return the raw gmail_credentials JSON string for the first enabled account."""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -683,40 +687,86 @@ def get_gmail_credentials(user_id):
     return row[0] if not isinstance(row, dict) else row.get("gmail_credentials")
 
 
-def update_last_scanned(user_id):
+def get_all_email_settings(user_id):
+    """Return all enabled email_settings rows for a user (multi-account)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT id, gmail_email, enabled, last_scanned_at, scan_checkpoint, created_at FROM email_settings WHERE user_id = {_ph()} AND enabled = 1 ORDER BY created_at",
+        (user_id,),
+    )
+    rows = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return rows
+
+
+def get_all_gmail_credentials(user_id):
+    """Return list of {id, gmail_email, gmail_credentials} for all enabled accounts."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT id, gmail_email, gmail_credentials FROM email_settings WHERE enabled = 1 AND user_id = {_ph()} ORDER BY created_at",
+        (user_id,),
+    )
+    rows = _fetchall(cur, conn)
+    cur.close()
+    conn.close()
+    return rows
+
+
+def update_last_scanned(user_id, setting_id=None):
     conn = get_connection()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute(
-        f"UPDATE email_settings SET last_scanned_at = {_ph()} WHERE user_id = {_ph()}",
-        (now, user_id),
-    )
+    if setting_id:
+        cur.execute(
+            f"UPDATE email_settings SET last_scanned_at = {_ph()} WHERE id = {_ph()} AND user_id = {_ph()}",
+            (now, setting_id, user_id),
+        )
+    else:
+        cur.execute(
+            f"UPDATE email_settings SET last_scanned_at = {_ph()} WHERE user_id = {_ph()}",
+            (now, user_id),
+        )
     conn.commit()
     cur.close()
     conn.close()
 
 
-def save_scan_checkpoint(checkpoint_epoch, user_id):
+def save_scan_checkpoint(checkpoint_epoch, user_id, setting_id=None):
     """Save the epoch of the oldest processed email so next scan continues from there."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        f"UPDATE email_settings SET scan_checkpoint = {_ph()} WHERE user_id = {_ph()}",
-        (str(checkpoint_epoch), user_id),
-    )
+    if setting_id:
+        cur.execute(
+            f"UPDATE email_settings SET scan_checkpoint = {_ph()} WHERE id = {_ph()} AND user_id = {_ph()}",
+            (str(checkpoint_epoch), setting_id, user_id),
+        )
+    else:
+        cur.execute(
+            f"UPDATE email_settings SET scan_checkpoint = {_ph()} WHERE user_id = {_ph()}",
+            (str(checkpoint_epoch), user_id),
+        )
     conn.commit()
     cur.close()
     conn.close()
 
 
-def clear_scan_checkpoint(user_id):
+def clear_scan_checkpoint(user_id, setting_id=None):
     """Clear checkpoint after first scan is fully complete."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        f"UPDATE email_settings SET scan_checkpoint = NULL WHERE user_id = {_ph()}",
-        (user_id,),
-    )
+    if setting_id:
+        cur.execute(
+            f"UPDATE email_settings SET scan_checkpoint = NULL WHERE id = {_ph()} AND user_id = {_ph()}",
+            (setting_id, user_id),
+        )
+    else:
+        cur.execute(
+            f"UPDATE email_settings SET scan_checkpoint = NULL WHERE user_id = {_ph()}",
+            (user_id,),
+        )
     conn.commit()
     cur.close()
     conn.close()
@@ -726,6 +776,19 @@ def delete_email_settings(user_id):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(f"DELETE FROM email_settings WHERE user_id = {_ph()}", (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def delete_email_account(setting_id, user_id):
+    """Delete a specific email account by its setting ID (scoped to user)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"DELETE FROM email_settings WHERE id = {_ph()} AND user_id = {_ph()}",
+        (setting_id, user_id),
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -836,17 +899,23 @@ def get_admin_stats():
     """)
     stats["recent_scans"] = _fetchall(cur, conn)
 
-    # User list with email and job count
-    cur.execute("""
-        SELECT u.id, u.username, u.display_name, u.created_at,
-               COALESCE(e.gmail_email, '') AS email,
-               COUNT(j.id) AS job_count
-        FROM users u
-        LEFT JOIN email_settings e ON u.id = e.user_id AND e.enabled = 1
-        LEFT JOIN jobs j ON u.id = j.user_id
-        GROUP BY u.id, u.username, u.display_name, u.created_at, e.gmail_email
-        ORDER BY u.created_at DESC
-    """)
+    # User list with email and job count (subquery to avoid duplicate rows from multiple email accounts)
+    if USE_POSTGRES:
+        cur.execute("""
+            SELECT u.id, u.username, u.display_name, u.created_at,
+                   COALESCE((SELECT STRING_AGG(e.gmail_email, ', ') FROM email_settings e WHERE e.user_id = u.id AND e.enabled = 1), '') AS email,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.user_id = u.id) AS job_count
+            FROM users u
+            ORDER BY u.created_at DESC
+        """)
+    else:
+        cur.execute("""
+            SELECT u.id, u.username, u.display_name, u.created_at,
+                   COALESCE((SELECT GROUP_CONCAT(e.gmail_email, ', ') FROM email_settings e WHERE e.user_id = u.id AND e.enabled = 1), '') AS email,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.user_id = u.id) AS job_count
+            FROM users u
+            ORDER BY u.created_at DESC
+        """)
     stats["users"] = _fetchall(cur, conn)
 
     cur.close()

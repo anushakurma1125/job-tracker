@@ -10,6 +10,7 @@ from database import (init_db, add_job, get_jobs, get_job, update_job, delete_jo
                        job_exists, get_existing_links, bulk_add_jobs,
                        add_resume, get_resumes, get_resume_file, update_resume_label, delete_resume,
                        get_email_settings, save_email_settings, get_gmail_credentials,
+                       get_all_email_settings, get_all_gmail_credentials, delete_email_account,
                        update_last_scanned, delete_email_settings,
                        get_earliest_applied_date, get_active_jobs,
                        add_scan_log, get_scan_logs,
@@ -32,43 +33,65 @@ _scan_state = {}   # {user_id: {"status": "scanning"|"done"|"error", "progress":
 _scan_lock = threading.Lock()
 
 
-def _background_scan(uid, creds_json, jobs, since_date, is_first_scan):
-    """Run email scan in a background thread (no HTTP timeout constraint)."""
+def _background_scan(uid, accounts, jobs, since_date, is_first_scan):
+    """Run email scan in a background thread across all connected accounts."""
     try:
         from email_scanner import scan_for_rejections
 
-        def on_progress(msg):
-            with _scan_lock:
-                if uid in _scan_state:
-                    _scan_state[uid]["progress"] = msg
+        total_emails_checked = 0
+        total_rejections_found = 0
+        all_details = []
+        num_accounts = len(accounts)
 
-        result = scan_for_rejections(
-            creds_json, jobs, since_date,
-            is_first_scan=is_first_scan,
-            progress_callback=on_progress,
-        )
+        for idx, acct in enumerate(accounts, 1):
+            acct_email = acct.get("gmail_email", "Account")
+            setting_id = acct["id"]
+            creds_json = acct["gmail_credentials"]
 
-        # Update matched jobs to Rejected
-        for match in result.get("details", []):
-            update_job(match["job_id"], {
-                "status": "Rejected",
-                "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
-            }, uid)
+            def on_progress(msg, _email=acct_email, _idx=idx):
+                with _scan_lock:
+                    if uid in _scan_state:
+                        prefix = f"[{_email}] ({_idx}/{num_accounts}) " if num_accounts > 1 else ""
+                        _scan_state[uid]["progress"] = prefix + msg
 
-        # Save scan log
+            on_progress("Starting scan...")
+
+            result = scan_for_rejections(
+                creds_json, jobs, since_date,
+                is_first_scan=is_first_scan,
+                progress_callback=on_progress,
+            )
+
+            # Update matched jobs to Rejected
+            for match in result.get("details", []):
+                update_job(match["job_id"], {
+                    "status": "Rejected",
+                    "comment": f"Auto-detected rejection from email: {match.get('email_subject', '')[:80]}",
+                }, uid)
+
+            total_emails_checked += result.get("emails_checked", 0)
+            total_rejections_found += result.get("rejections_found", 0)
+            all_details.extend(result.get("details", []))
+
+            # Mark this account as scanned
+            update_last_scanned(uid, setting_id=setting_id)
+            clear_scan_checkpoint(uid, setting_id=setting_id)
+
+        # Save combined scan log
+        combined_result = {
+            "emails_checked": total_emails_checked,
+            "rejections_found": total_rejections_found,
+            "details": all_details,
+        }
         add_scan_log(
-            result["emails_checked"],
-            result["rejections_found"],
-            json.dumps(result["details"]),
+            total_emails_checked,
+            total_rejections_found,
+            json.dumps(all_details),
             uid,
         )
 
-        # Mark scan complete
-        update_last_scanned(uid)
-        clear_scan_checkpoint(uid)
-
         with _scan_lock:
-            _scan_state[uid] = {"status": "done", "result": result}
+            _scan_state[uid] = {"status": "done", "result": combined_result}
 
     except Exception as e:
         import traceback
@@ -465,14 +488,21 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 @app.route("/api/settings/email", methods=["GET"])
 @login_required
 def get_email_status():
-    settings = get_email_settings(current_user_id())
-    if not settings or not settings.get("enabled"):
-        return jsonify({"connected": False, "configured": bool(GOOGLE_CLIENT_ID)})
+    accounts = get_all_email_settings(current_user_id())
+    configured = bool(GOOGLE_CLIENT_ID)
+    if not accounts:
+        return jsonify({"connected": False, "configured": configured, "accounts": []})
     return jsonify({
         "connected": True,
-        "configured": True,
-        "email": settings.get("gmail_email", ""),
-        "last_scanned_at": settings.get("last_scanned_at", ""),
+        "configured": configured,
+        "accounts": [
+            {
+                "id": a["id"],
+                "email": a.get("gmail_email", ""),
+                "last_scanned_at": a.get("last_scanned_at", ""),
+            }
+            for a in accounts
+        ],
     })
 
 
@@ -562,7 +592,12 @@ def oauth_callback():
 @app.route("/api/settings/email/disconnect", methods=["POST"])
 @login_required
 def disconnect_email():
-    delete_email_settings(current_user_id())
+    data = request.get_json(silent=True) or {}
+    account_id = data.get("account_id")
+    if account_id:
+        delete_email_account(account_id, current_user_id())
+    else:
+        delete_email_settings(current_user_id())
     return jsonify({"message": "Email disconnected"})
 
 
@@ -579,11 +614,10 @@ def trigger_scan():
                 "progress": _scan_state[uid].get("progress", "Scanning..."),
             }), 200
 
-    creds_json = get_gmail_credentials(uid)
-    if not creds_json:
+    accounts = get_all_gmail_credentials(uid)
+    if not accounts:
         return jsonify({"error": "Gmail not connected. Go to Settings to connect your email."}), 400
 
-    settings = get_email_settings(uid)
     jobs = get_active_jobs(uid)
     if not jobs:
         return jsonify({
@@ -592,9 +626,12 @@ def trigger_scan():
         }), 200
 
     # Determine scan start date and whether this is the first scan
-    is_first_scan = not (settings and settings.get("last_scanned_at"))
-    if not is_first_scan:
-        since_date = settings["last_scanned_at"]
+    # Use the earliest last_scanned_at across all accounts (or None if any account is new)
+    all_settings = get_all_email_settings(uid)
+    last_scanned_dates = [s.get("last_scanned_at") for s in all_settings if s.get("last_scanned_at")]
+    is_first_scan = len(last_scanned_dates) < len(all_settings)
+    if not is_first_scan and last_scanned_dates:
+        since_date = min(str(d) for d in last_scanned_dates)
     else:
         since_date = get_earliest_applied_date(uid)
 
@@ -607,7 +644,7 @@ def trigger_scan():
 
     thread = threading.Thread(
         target=_background_scan,
-        args=(uid, creds_json, jobs, since_date, is_first_scan),
+        args=(uid, accounts, jobs, since_date, is_first_scan),
         daemon=True,
     )
     thread.start()
